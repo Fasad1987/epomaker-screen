@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rt82-plasma"
+version = "0.1.0"
+description = "Epomaker RT82 keyboard screen on Linux: clock sync, pictures and live widgets (KDE Plasma app + CLI)"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+pyqt6 = ["PyQt6>=6.2"]
+pyside6 = ["PySide6>=6.4"]
+test = ["pytest"]
+
+[project.scripts]
+rt82ctl = "rt82.cli:main"
+
+[project.gui-scripts]
+rt82-screen = "rt82.gui:main"
+
+[tool.setuptools]
+packages = ["rt82"]
+
+[tool.setuptools.package-data]
+rt82 = ["data/*.svg"]

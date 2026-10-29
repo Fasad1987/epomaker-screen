@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=RT82 Screen
+Name[ru]=Экран RT82
+GenericName=Keyboard screen widgets
+GenericName[ru]=Виджеты на экране клавиатуры
+Comment=Widgets, pictures and clock sync for the Epomaker RT82 keyboard screen
+Comment[ru]=Виджеты, картинки и синхронизация времени для экрана клавиатуры Epomaker RT82
+Exec=rt82-screen
+Icon=rt82-plasma
+Terminal=false
+Categories=Utility;Settings;HardwareSettings;Qt;KDE;
+Keywords=epomaker;rt82;keyboard;lcd;screen;клавиатура;экран;
+StartupNotify=true

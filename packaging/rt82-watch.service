@@ -1,0 +1,15 @@
+# Headless alternative to the tray app: syncs the keyboard clock whenever the
+# RT82 is plugged in and after suspend. Do not run it together with the tray
+# app (both would talk to the screen; they share a lock, but there is no point).
+[Unit]
+Description=Epomaker RT82 clock sync
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/rt82ctl watch
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

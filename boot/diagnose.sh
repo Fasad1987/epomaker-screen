@@ -1,0 +1,82 @@
+#!/bin/bash
+# Collects what is needed to debug the RT82 on this machine into one file.
+#   boot/diagnose.sh              -> rt82-diagnose-<date>.txt in the current directory
+# Run with sudo to include the initrd contents and the GRUB config.
+set -uo pipefail
+
+OUT="${1:-rt82-diagnose-$(date +%Y%m%d-%H%M%S).txt}"
+KERNEL="$(uname -r)"
+
+section() { printf '\n===== %s =====\n' "$*"; }
+run() { printf '$ %s\n' "$*"; "$@" 2>&1; }
+
+{
+	section "система"
+	cat /etc/os-release 2>/dev/null | grep -E '^(PRETTY_NAME|VERSION_ID)='
+	echo "ядро: $KERNEL"
+	echo "загрузка: $([ -d /sys/firmware/efi ] && echo UEFI || echo BIOS/legacy)"
+	command -v mokutil >/dev/null && run mokutil --sb-state
+	echo "сеанс: ${XDG_SESSION_TYPE:-?} ${XDG_CURRENT_DESKTOP:-}"
+
+	section "USB"
+	command -v lsusb >/dev/null && { run lsusb -d 36b0:; run lsusb -d 1919:; run lsusb -t; }
+	for d in /sys/bus/usb/devices/*; do
+		[ -r "$d/idVendor" ] || continue
+		case "$(cat "$d/idVendor")" in 36b0|1919) ;; *) continue ;; esac
+		echo "$d: $(cat "$d/idVendor"):$(cat "$d/idProduct") $(cat "$d/manufacturer" 2>/dev/null) / $(cat "$d/product" 2>/dev/null) speed=$(cat "$d/speed" 2>/dev/null)"
+	done
+
+	section "hidraw"
+	for h in /sys/class/hidraw/hidraw*; do
+		id="$(grep -s HID_ID "$h/device/uevent")"
+		case "$id" in *000036B0*|*00001919*) ;; *) continue ;; esac
+		node="/dev/${h##*/}"
+		echo "$node $id $(grep -s HID_NAME "$h/device/uevent") iface=$(basename "$(dirname "$(readlink -f "$h/device")")")"
+		echo "   $(ls -l "$node")"
+		command -v getfacl >/dev/null && getfacl -p "$node" 2>/dev/null | grep -v '^#' | sed 's/^/   /'
+		echo "   descriptor: $(od -An -tx1 -N8 "$h/device/report_descriptor" | tr -s ' ')"
+	done
+	ls -l /etc/udev/rules.d/*rt82* 2>/dev/null || echo "udev-правило RT82 не установлено"
+
+	section "драйверы клавиатуры (по sysfs)"
+	for ev in /sys/class/input/input*; do
+		dev="$(readlink -f "$ev")"
+		case "$dev" in */usb*) ;; *) continue ;; esac
+		echo "$(cat "$ev/name" 2>/dev/null)  led=$(cat "$ev/capabilities/led" 2>/dev/null)"
+		p="$dev"
+		while [ "$p" != /sys/devices ] && [ "$p" != / ]; do
+			[ -L "$p/driver" ] && echo "   ${p##*/}: $(basename "$(readlink -f "$p/driver")")"
+			p="${p%/*}"
+		done
+	done
+	run lsmod | grep -E '^(usbhid|hid_generic|hid|xhci|ehci|ohci|uhci|hid_)' || true
+
+	section "initrd"
+	for f in /etc/initrd.mk /etc/dracut.conf /etc/dracut.conf.d/*.conf /etc/initramfs-tools/modules /etc/mkinitcpio.conf; do
+		[ -r "$f" ] && { echo "--- $f"; grep -v '^\s*#' "$f" | grep -v '^\s*$'; }
+	done
+	ls /etc/initrd.mk.d 2>/dev/null
+	for img in "/boot/initrd-$KERNEL.img" "/boot/initramfs-$KERNEL.img" "/boot/initrd.img-$KERNEL"; do
+		[ -e "$img" ] || continue
+		echo "образ: $img"
+		for t in initrd-ls lsinitrd lsinitramfs; do
+			command -v $t >/dev/null || continue
+			$t "$img" 2>/dev/null | grep -E '(usbhid|hid-generic|hid_generic|xhci|ehci|ohci|uhci|/hid\.ko|cryptsetup|plymouth)' | sed 's/^/   /'
+			break
+		done
+	done
+	echo "cmdline: $(cat /proc/cmdline)"
+
+	section "GRUB"
+	for f in /etc/sysconfig/grub2 /etc/default/grub; do
+		[ -r "$f" ] && { echo "--- $f"; grep -E '^GRUB_(TERMINAL|ENABLE_CRYPTODISK|CMDLINE|PRELOAD)' "$f"; }
+	done
+	for f in /boot/grub/grub.cfg /boot/grub2/grub.cfg /boot/efi/EFI/*/grub.cfg; do
+		[ -r "$f" ] && { echo "--- $f"; grep -E 'terminal_input|insmod (usb|ohci|uhci|ehci|at_keyboard|usb_keyboard|cryptodisk|luks)|password' "$f" | sort | uniq -c; }
+	done
+
+	section "журнал ядра (USB/HID)"
+	dmesg 2>/dev/null | grep -iE '36b0|1919|rt82|epomaker|usbhid|hid-generic' | tail -40 || echo "(dmesg недоступен без sudo)"
+} > "$OUT"
+
+echo "Сохранено в $OUT"
