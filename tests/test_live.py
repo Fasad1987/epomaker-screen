@@ -1,11 +1,10 @@
 import pytest
 
-from rt82 import device, live
+from fake_screen import Clock, FakeScreen
+from rt82 import device
 from rt82.device import Screen
 from rt82.live import LiveConfig, LiveStreamer, erase_steps
 from rt82.protocol import QGIF_HEIGHT, WIDTH, Kb
-
-from fake_screen import Clock, FakeScreen
 
 BITS = 32
 
@@ -73,7 +72,7 @@ def test_erase_steps_stay_short():
         assert steps[-1] == used
         done = 0
         for n in steps:
-            assert live.ERASE_S_BLANK * done + live.ERASE_S_DATA * (n - done) <= live.MAX_ERASE_S + 1e-9
+            assert device.ERASE_S_BLANK * done + device.ERASE_S_DATA * (n - done) <= device.MAX_ERASE_S + 1e-9
             done = n
 
 
@@ -84,7 +83,6 @@ def test_streams_for_hours_without_reading_unwritten_flash(fps):
     kb = FakeKeyboard()
     streamer.start(kb)
     assert kb.sent == [(Kb.SCREEN_COUNT, b"\x01")]
-    assert fake.downloads == 1
     lags = run(clock, fake, streamer, 3 * 3600)
     # A frame shows the time it was rendered for, within a frame and the prep estimate.
     on_screen = [lag for lag in lags if abs(lag) < 3600]
@@ -92,7 +90,7 @@ def test_streams_for_hours_without_reading_unwritten_flash(fps):
     assert streamer.stats["segments"] > 30
     assert streamer.stats["erases"] >= 1
     assert streamer.stats["underruns"] == 0
-    assert fake.downloads == 1  # rotations never use download mode
+    assert fake.erased_while_playing == 0  # the picture on screen is never erased
     assert fake.max_erase_s <= 3.5
     # Wear: the stream area is erased about once an hour or less at 1 fps.
     per_hour = max(fake.erase_count_per_block[:24]) / 3

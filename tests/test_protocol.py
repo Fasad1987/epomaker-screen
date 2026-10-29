@@ -2,12 +2,11 @@ import datetime as dt
 
 import pytest
 
+from fake_screen import Clock, FakeScreen
 from rt82 import device, qgif
 from rt82.device import Screen
 from rt82.hidraw import parse_descriptor
 from rt82.protocol import BLOCK, Cmd, Slot, packet, table_pages, time_digits
-
-from fake_screen import Clock, FakeScreen
 from test_live import FakeKeyboard, read_stamp, stamp
 
 
@@ -36,9 +35,9 @@ def test_table_pages():
 
 def test_descriptor_sizes():
     # QMK/VIA raw HID: usage page 0xFF60, 32-byte input and output reports.
-    via = bytes.fromhex("0660ff0961a101" "0962150026ff00750895208102" "0963150026ff00750895209102" "c0")
+    via = bytes.fromhex("0660ff0961a1010962150026ff007508952081020963150026ff00750895209102c0")
     assert parse_descriptor(via) == (0xFF60, 32, 32)
-    lcd = bytes.fromhex("06ff000901a101" "0901150026ff00750895408102" "0902150026ff00750895409102" "c0")
+    lcd = bytes.fromhex("06ff000901a1010901150026ff007508954081020902150026ff00750895409102c0")
     assert parse_descriptor(lcd) == (0x00FF, 64, 64)
 
 
@@ -53,8 +52,8 @@ def test_upload_writes_images_and_shows_slot_one(monkeypatch):
     slots = s.upload([a, b], kb)
     assert slots == [Slot(0, len(a)), Slot(1, len(b))]
     assert kb.sent == [(0xE3, b"\x02")]
-    assert fake.flash[:len(a)] == a and fake.flash[BLOCK : BLOCK + len(b)] == b
-    assert fake.committed == ([(0, len(a)), (1, len(b))], 3)
+    assert fake.flash[: len(a)] == a and fake.flash[BLOCK : BLOCK + len(b)] == b
+    assert fake.committed == ([(0, len(a)), (1, len(b))], 2)
     assert read_stamp(fake.showing()) == 5
 
 
@@ -92,3 +91,37 @@ def test_tile_colours_are_close():
             got = pal[(enc[4 + i // 4] >> (6 - 2 * (i % 4))) & 3]
             want = tile[i * 3 : i * 3 + 3]
             assert all(abs(g - w) <= 8 for g, w in zip(got, want))
+
+
+def test_upload_never_uses_download_mode_and_replaces_what_is_playing(monkeypatch):
+    monkeypatch.setattr(device.time, "sleep", lambda s: None)
+    fake = FakeScreen(Clock())
+    s = Screen(fake)
+    big = qgif.encode([stamp(i) for i in range(30)], 240, 136, fps=20)
+    s.upload([big], FakeKeyboard())
+    s.upload([qgif.encode([stamp(9)], 240, 136, fps=1)], FakeKeyboard())
+    assert Cmd.START_DOWNLOAD not in fake.sent
+    assert read_stamp(fake.showing()) == 9
+    assert fake.max_erase_s <= 3.5
+
+
+def test_recovers_from_an_interrupted_sequence(monkeypatch):
+    monkeypatch.setattr(device.time, "sleep", lambda s: None)
+    fake = FakeScreen(Clock())
+    s = Screen(fake)
+    fake.drop_reply = {Cmd.COMMIT_TABLE}  # what the RT82 did: no reply to 16, then silence
+    with pytest.raises(device.DeviceError):
+        s.upload([qgif.encode([stamp(1)], 240, 136, fps=1)], FakeKeyboard())
+    assert not fake.stuck  # upload() closed the session on its way out
+    fake.stuck = True  # left like that by a crashed program
+    s.probe()  # the next connection notices and recovers
+    assert not fake.stuck
+    s.upload([qgif.encode([stamp(2)], 240, 136, fps=1)], FakeKeyboard())
+    assert read_stamp(fake.showing()) == 2
+
+
+def test_probe_reports_a_frozen_controller():
+    fake = FakeScreen(Clock())
+    fake.frozen = True
+    with pytest.raises(device.ScreenFrozen, match="Power-cycle"):
+        Screen(fake).probe()

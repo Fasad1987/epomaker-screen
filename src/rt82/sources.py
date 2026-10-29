@@ -12,7 +12,7 @@ import time
 import urllib.parse
 import urllib.request
 from collections import deque
-from typing import Any, Optional
+from typing import Any
 
 HISTORY = 60
 
@@ -24,11 +24,11 @@ def _read(path: str) -> str:
 
 class SystemStats:
     def __init__(self):
-        self._cpu_prev: Optional[tuple[int, int]] = None
-        self._net_prev: Optional[tuple[float, int, int]] = None
+        self._cpu_prev: tuple[int, int] | None = None
+        self._net_prev: tuple[float, int, int] | None = None
         self.history: dict[str, deque] = {}
 
-    def _cpu(self) -> Optional[float]:
+    def _cpu(self) -> float | None:
         fields = [int(x) for x in _read("/proc/stat").split("\n", 1)[0].split()[1:]]
         idle, total = fields[3] + (fields[4] if len(fields) > 4 else 0), sum(fields)
         prev, self._cpu_prev = self._cpu_prev, (idle, total)
@@ -48,7 +48,7 @@ class SystemStats:
         return {"ram": ram, "swap": swap, "ram_used_gb": (info["MemTotal"] - info.get("MemAvailable", 0)) / 1048576}
 
     @staticmethod
-    def _temp() -> Optional[float]:
+    def _temp() -> float | None:
         # Prefer CPU package sensors, then any thermal zone.
         best = None
         base = "/sys/class/hwmon"
@@ -93,7 +93,13 @@ class SystemStats:
 
     def sample(self) -> dict[str, Any]:
         out: dict[str, Any] = {}
-        for fn in (lambda: {"cpu": self._cpu()}, self._mem, lambda: {"temp": self._temp()}, self._net, lambda: {"disk": self._disk()}):
+        for fn in (
+            lambda: {"cpu": self._cpu()},
+            self._mem,
+            lambda: {"temp": self._temp()},
+            self._net,
+            lambda: {"disk": self._disk()},
+        ):
             try:
                 out.update({k: v for k, v in fn().items() if v is not None})
             except (OSError, ValueError, KeyError, IndexError):
@@ -114,7 +120,9 @@ def now_playing() -> dict[str, str]:
         try:
             out = subprocess.run(
                 ["playerctl", "metadata", "--format", "{{status}}\t{{artist}}\t{{title}}"],
-                capture_output=True, text=True, timeout=2,
+                capture_output=True,
+                text=True,
+                timeout=2,
             ).stdout.strip()
             if out:
                 status, artist, title = (out.split("\t") + ["", "", ""])[:3]
@@ -126,18 +134,43 @@ def now_playing() -> dict[str, str]:
         return {}
     try:
         names = subprocess.run(
-            ["gdbus", "call", "--session", "--dest", "org.freedesktop.DBus", "--object-path", "/",
-             "--method", "org.freedesktop.DBus.ListNames"],
-            capture_output=True, text=True, timeout=2,
+            [
+                "gdbus",
+                "call",
+                "--session",
+                "--dest",
+                "org.freedesktop.DBus",
+                "--object-path",
+                "/",
+                "--method",
+                "org.freedesktop.DBus.ListNames",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=2,
         ).stdout
         players = re.findall(r"'(org\.mpris\.MediaPlayer2\.[^']+)'", names)
         fallback = {}
         for name in players:
-            def get(prop: str) -> str:
+
+            def get(prop: str, name: str = name) -> str:
                 return subprocess.run(
-                    ["gdbus", "call", "--session", "--dest", name, "--object-path", "/org/mpris/MediaPlayer2",
-                     "--method", "org.freedesktop.DBus.Properties.Get", "org.mpris.MediaPlayer2.Player", prop],
-                    capture_output=True, text=True, timeout=2,
+                    [
+                        "gdbus",
+                        "call",
+                        "--session",
+                        "--dest",
+                        name,
+                        "--object-path",
+                        "/org/mpris/MediaPlayer2",
+                        "--method",
+                        "org.freedesktop.DBus.Properties.Get",
+                        "org.mpris.MediaPlayer2.Player",
+                        prop,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
                 ).stdout
 
             meta, status = get("Metadata"), get("PlaybackStatus")
@@ -156,20 +189,49 @@ def now_playing() -> dict[str, str]:
 
 
 WEATHER_CODES = {
-    0: "Ясно", 1: "Малооблачно", 2: "Облачно", 3: "Пасмурно", 45: "Туман", 48: "Изморозь",
-    51: "Морось", 53: "Морось", 55: "Морось", 61: "Дождь", 63: "Дождь", 65: "Ливень",
-    66: "Ледяной дождь", 67: "Ледяной дождь", 71: "Снег", 73: "Снег", 75: "Снегопад", 77: "Снежная крупа",
-    80: "Ливень", 81: "Ливень", 82: "Ливень", 85: "Снег", 86: "Снегопад", 95: "Гроза", 96: "Гроза", 99: "Гроза",
+    0: "Clear",
+    1: "Mostly clear",
+    2: "Partly cloudy",
+    3: "Overcast",
+    45: "Fog",
+    48: "Rime fog",
+    51: "Drizzle",
+    53: "Drizzle",
+    55: "Drizzle",
+    61: "Rain",
+    63: "Rain",
+    65: "Heavy rain",
+    66: "Freezing rain",
+    67: "Freezing rain",
+    71: "Snow",
+    73: "Snow",
+    75: "Heavy snow",
+    77: "Snow grains",
+    80: "Showers",
+    81: "Showers",
+    82: "Heavy showers",
+    85: "Snow showers",
+    86: "Snow showers",
+    95: "Thunderstorm",
+    96: "Thunderstorm",
+    99: "Thunderstorm",
 }
 
 
 def weather(lat: float, lon: float) -> dict[str, Any]:
     """Current weather from Open-Meteo (no API key)."""
-    q = urllib.parse.urlencode({"latitude": lat, "longitude": lon, "current": "temperature_2m,weather_code,wind_speed_10m"})
+    q = urllib.parse.urlencode(
+        {"latitude": lat, "longitude": lon, "current": "temperature_2m,weather_code,wind_speed_10m"}
+    )
     with urllib.request.urlopen(f"https://api.open-meteo.com/v1/forecast?{q}", timeout=10) as r:
         cur = json.load(r)["current"]
     code = int(cur.get("weather_code", -1))
-    return {"temp": cur.get("temperature_2m"), "wind": cur.get("wind_speed_10m"), "code": code, "text": WEATHER_CODES.get(code, "")}
+    return {
+        "temp": cur.get("temperature_2m"),
+        "wind": cur.get("wind_speed_10m"),
+        "code": code,
+        "text": WEATHER_CODES.get(code, ""),
+    }
 
 
 class DataHub:
@@ -184,7 +246,7 @@ class DataHub:
         self._want_media = False
         self._due: dict[str, float] = {}
         self._stop = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
 
     def configure(self, layout: dict) -> None:
         cmds, places, media = {}, set(), False
@@ -252,6 +314,6 @@ class DataHub:
             r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
             return (r.stdout or r.stderr).strip()
         except subprocess.TimeoutExpired:
-            return "таймаут"
+            return "timed out"
         except OSError as e:
             return str(e)

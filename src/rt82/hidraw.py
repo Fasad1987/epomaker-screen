@@ -11,9 +11,10 @@ import errno
 import os
 import select
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterator, Optional
+from typing import Callable
 
 SYSFS_HIDRAW = Path("/sys/class/hidraw")
 
@@ -23,10 +24,10 @@ class HidInfo:
     node: str  # /dev/hidrawN
     vendor_id: int
     product_id: int
-    usage_page: Optional[int]
-    interface: Optional[int]
-    in_size: Optional[int]
-    out_size: Optional[int]
+    usage_page: int | None
+    interface: int | None
+    in_size: int | None
+    out_size: int | None
     name: str
 
 
@@ -46,7 +47,7 @@ def _parse_items(desc: bytes) -> Iterator[tuple[int, int, int]]:
         i += 1 + size
 
 
-def parse_descriptor(desc: bytes) -> tuple[Optional[int], Optional[int], Optional[int]]:
+def parse_descriptor(desc: bytes) -> tuple[int | None, int | None, int | None]:
     """Returns (first usage page, input report bytes, output report bytes).
 
     Only meant for the simple vendor descriptors used by the RT82 (one
@@ -81,7 +82,7 @@ def _uevent(path: Path) -> dict[str, str]:
     return out
 
 
-def _interface_number(device_dir: Path) -> Optional[int]:
+def _interface_number(device_dir: Path) -> int | None:
     # .../1-2:1.1/0003:36B0:30A3.0005 -> the parent directory names the USB interface
     try:
         parent = device_dir.resolve().parent.name
@@ -125,7 +126,7 @@ def enumerate_hidraw(sysfs: Path = SYSFS_HIDRAW) -> list[HidInfo]:
     return result
 
 
-def find(vendor_id: int, product_id: int, usage_page: int, interface: Optional[int] = None) -> Optional[HidInfo]:
+def find(vendor_id: int, product_id: int, usage_page: int, interface: int | None = None) -> HidInfo | None:
     """Finds a node by ids and usage page; falls back to the interface number."""
     candidates = [d for d in enumerate_hidraw() if d.vendor_id == vendor_id and d.product_id == product_id]
     for d in candidates:
@@ -153,11 +154,10 @@ class HidDevice:
         self.info = info
         self.report_size = report_size
         try:
-            self.fd: Optional[int] = os.open(info.node, os.O_RDWR | os.O_NONBLOCK | os.O_CLOEXEC)
+            self.fd: int | None = os.open(info.node, os.O_RDWR | os.O_NONBLOCK | os.O_CLOEXEC)
         except PermissionError as e:
             raise PermissionError(
-                f"нет доступа к {info.node}: установите udev-правило (scripts/install.sh) "
-                "и переподключите клавиатуру"
+                f"no access to {info.node}: install the udev rule (scripts/install.sh) and reconnect the keyboard"
             ) from e
 
     @property
@@ -171,7 +171,7 @@ class HidDevice:
             finally:
                 self.fd = None
 
-    def __enter__(self) -> "HidDevice":
+    def __enter__(self) -> HidDevice:
         return self
 
     def __exit__(self, *exc) -> None:
@@ -179,14 +179,14 @@ class HidDevice:
 
     def _fd(self) -> int:
         if self.fd is None:
-            raise IOError(f"{self.info.node} закрыт")
+            raise OSError(f"{self.info.node} is closed")
         return self.fd
 
     def write(self, data: bytes) -> None:
         buf = bytes(1) + bytes(data[: self.report_size]).ljust(self.report_size, b"\0")
         os.write(self._fd(), buf)
 
-    def try_read(self) -> Optional[bytes]:
+    def try_read(self) -> bytes | None:
         try:
             return os.read(self._fd(), max(self.report_size, 64))
         except BlockingIOError:
@@ -210,5 +210,5 @@ class HidDevice:
                 continue
             left = end - time.monotonic()
             if left <= 0:
-                raise HidTimeout(f"{self.info.node}: нет ответа от устройства")
+                raise HidTimeout(f"{self.info.node}: no reply from the device")
             select.select([self._fd()], [], [], min(left, 0.05))

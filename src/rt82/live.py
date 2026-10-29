@@ -30,18 +30,15 @@ import math
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Optional
+from typing import Callable
 
 from . import qgif
-from .device import DeviceError, Keyboard, Screen
+from .device import DeviceError, Keyboard, Screen, erase_steps  # noqa: F401 (re-exported)
 from .protocol import BLOCK, QGIF_HEIGHT, WIDTH, Slot, blocks_for
 
 Render = Callable[[float], bytes]  # wall-clock time -> 240x136 RGB888
 
 FULL_FRAME = qgif.TileEncoder(WIDTH, QGIF_HEIGHT).bitmap_len + 8 * (WIDTH // 4) * (QGIF_HEIGHT // 4)
-# Measured on the same controller (keyscreen): ~137 ms per block holding data, ~56 ms per blank one.
-# Erases over ~5 s made it drop off USB; ones up to ~4 s never did.
-ERASE_S_DATA, ERASE_S_BLANK, MAX_ERASE_S = 0.14, 0.06, 3.4
 
 
 @dataclass
@@ -83,23 +80,13 @@ class _Segment:
         return Slot(self.start, self.capacity)
 
 
-def erase_steps(used: int, budget: float = MAX_ERASE_S) -> list[int]:
-    """Erase counts that clear blocks 0..used-1 with each erase under ``budget``."""
-    steps, done = [], 0
-    while done < used:
-        n = done + max(1, int((budget - ERASE_S_BLANK * done) / ERASE_S_DATA))
-        done = min(used, n)
-        steps.append(done)
-    return steps
-
-
 class LiveStreamer:
     def __init__(
         self,
         screen: Screen,
         render: Render,
         fallback: bytes,
-        config: Optional[LiveConfig] = None,
+        config: LiveConfig | None = None,
         log: Callable[[str], None] = lambda m: None,
         monotonic: Callable[[], float] = time.monotonic,
         wall: Callable[[], float] = time.time,
@@ -112,10 +99,10 @@ class LiveStreamer:
         self.log = log
         self.now = monotonic
         self.wall = wall
-        self.seg: Optional[_Segment] = None
+        self.seg: _Segment | None = None
         self.used_blocks = 0  # blocks of the area that hold data
         self.allocation = 0
-        self.fallback_slot: Optional[Slot] = None
+        self.fallback_slot: Slot | None = None
         self.stats = {"frames": 0, "segments": 0, "erases": 0, "underruns": 0}
 
     @property
@@ -124,12 +111,12 @@ class LiveStreamer:
 
     # -- setup -----------------------------------------------------------
 
-    def start(self, keyboard: Optional[Keyboard] = None) -> None:
-        """Wipes the screen's flash and starts streaming (shows "Downloading" once)."""
+    def start(self, keyboard: Keyboard | None = None) -> None:
+        """Wipes the screen's flash and starts streaming."""
         area = self.cfg.area_blocks
         fallback = qgif.encode([self.fallback_rgb], WIDTH, QGIF_HEIGHT, fps=1)
         (self.fallback_slot,) = self.s.upload([fallback], keyboard, leading_blocks=area)
-        self.allocation = area + blocks_for(len(fallback)) + 1
+        self.allocation = area + blocks_for(len(fallback))
         self.used_blocks = 0
         self._begin_segment(0)
 
@@ -146,7 +133,7 @@ class LiveStreamer:
         self.seg = seg
         self.used_blocks = max(self.used_blocks, seg.end_block)
         self.stats["segments"] += 1
-        self.log(f"live: сегмент с блока {block}")
+        self.log(f"live: new segment at block {block}")
 
     # -- streaming -------------------------------------------------------
 
@@ -177,7 +164,7 @@ class LiveStreamer:
             # Fell behind (system suspend, slow USB): the screen may be reading
             # unwritten flash. A fresh segment puts a clean picture back.
             self.stats["underruns"] += 1
-            self.log("live: буфер опустел, начинаю новый сегмент")
+            self.log("live: fell behind the screen, starting a new segment")
             self._rotate(feed_current=False)
             return
         full = not self._feed(self.cfg.lead_frames)
@@ -200,7 +187,7 @@ class LiveStreamer:
         self.s.flip([self.fallback_slot], self.allocation)
         for n in erase_steps(self.used_blocks):
             took = self.s.erase_first(n, [self.fallback_slot], self.allocation)
-            self.log(f"live: стёрты блоки 0..{n - 1} за {took:.1f} с")
+            self.log(f"live: erased blocks 0..{n - 1} in {took:.1f} s")
         self.stats["erases"] += 1
         self.used_blocks = 0
         self._begin_segment(0)

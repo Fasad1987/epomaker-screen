@@ -1,13 +1,13 @@
 #!/bin/bash
 # Removes what scripts/install.sh installed. Settings in ~/.config/rt82-plasma are kept.
 #
-#   scripts/uninstall.sh              as the user (root via sudo, or su if there is no sudo)
-#   su -c 'scripts/uninstall.sh'      as root; --user NAME if it cannot tell who called su
+#   scripts/uninstall.sh              as the user (root via sudo, or su without sudo)
+#   su -c 'scripts/uninstall.sh'      as root; add --user NAME if it cannot tell who called su
 set -euo pipefail
 
-SRC="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=scripts/common.sh
-. "$SRC/scripts/common.sh"
+. "$ROOT/scripts/common.sh"
 
 USER_STAGE=0
 FOR_USER=""
@@ -16,22 +16,22 @@ while [ $# -gt 0 ]; do
 		--user) FOR_USER="${2:-}"; shift ;;
 		--user=*) FOR_USER="${1#--user=}" ;;
 		--user-stage) USER_STAGE=1 ;;
-		-h|--help) sed -n '2,6p' "$0"; exit 0 ;;
-		*) echo "неизвестный параметр: $1" >&2; exit 2 ;;
+		-h|--help) sed -n '2,5p' "$0"; exit 0 ;;
+		*) echo "unknown option: $1" >&2; exit 2 ;;
 	esac
 	shift
 done
 
 remove_udev() {
 	[ -e /etc/udev/rules.d/70-epomaker-rt82.rules ] || return 0
-	say "Удаляю udev-правило"
+	say "Removing the udev rule"
 	as_root sh -c 'rm -f /etc/udev/rules.d/70-epomaker-rt82.rules || exit 1; udevadm control --reload-rules || true'
 }
 
 if [ "$(id -u)" = 0 ] && [ "$USER_STAGE" = 0 ]; then
-	U="$(target_user "$FOR_USER")" || die "Не понял, у какого пользователя удалять. Укажите: --user ИМЯ"
+	U="$(target_user "$FOR_USER")" || die "Cannot tell which user to uninstall for. Pass --user NAME."
 	remove_udev
-	run_as_user "$U" bash "$SRC/scripts/uninstall.sh" --user-stage
+	run_as_user "$U" bash "$ROOT/scripts/uninstall.sh" --user-stage
 	exit 0
 fi
 
@@ -47,4 +47,4 @@ rm -f "$PREFIX/applications/rt82-plasma.desktop" "$PREFIX/icons/hicolor/scalable
 rm -rf "$PREFIX/rt82-plasma"
 
 [ "$USER_STAGE" = 1 ] || remove_udev
-echo "Удалено. Настройки остались в $CONFIG/rt82-plasma"
+echo "Removed. Your settings are still in $CONFIG/rt82-plasma"

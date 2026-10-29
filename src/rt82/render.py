@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from .protocol import QGIF_HEIGHT, WIDTH
+from .protocol import MAX_FRAMES, QGIF_HEIGHT, WIDTH
 from .qt import QtCore, QtGui, image_bytes
 
 Qt = QtCore.Qt
-FIT_MODES = {"contain": "Вписать", "cover": "Заполнить (обрезать)", "stretch": "Растянуть"}
+FIT_MODES = {"contain": "Fit inside", "cover": "Fill (crop)", "stretch": "Stretch"}
 
 
 def canvas(color: str = "#000000") -> QtGui.QImage:
@@ -53,23 +53,32 @@ def fit(src: QtGui.QImage, mode: str = "contain", background: str = "#000000") -
     return out
 
 
-def load_frames(path: str, mode: str = "contain", max_frames: int = 300) -> tuple[list[QtGui.QImage], int]:
-    """Loads a still or an animation (GIF, APNG, WebP). Returns frames and fps."""
+def load_frames(
+    path: str, mode: str = "contain", max_frames: int = MAX_FRAMES, read_limit: int = 1000
+) -> tuple[list[QtGui.QImage], int]:
+    """Loads a still or an animation (GIF, APNG, WebP). Returns frames and fps.
+
+    Animations longer than ``max_frames`` are thinned out evenly, keeping
+    their duration; 0 keeps every frame.
+    """
     reader = QtGui.QImageReader(path)
     reader.setAutoTransform(True)
     frames, delays = [], []
     # read() moves on to the next image of an animation by itself.
-    while len(frames) < max_frames and reader.canRead():
+    while len(frames) < read_limit and reader.canRead():
         img = reader.read()
         if img.isNull():
             break
-        frames.append(fit(img, mode))
+        frames.append(img)
         delays.append(reader.nextImageDelay())
     if not frames:
-        raise ValueError(f"не удалось открыть {path}: {reader.errorString()}")
+        raise ValueError(f"cannot open {path}: {reader.errorString()}")
     if len(frames) == 1:
-        return frames, 1
+        return [fit(frames[0], mode)], 1
     good = [d for d in delays if d > 0]
-    delay = sum(good) / len(good) if good else 100
-    fps = max(1, min(30, round(1000 / delay)))
-    return frames, fps
+    fps = 1000 / (sum(good) / len(good) if good else 100)
+    if max_frames and len(frames) > max_frames:
+        step = len(frames) / max_frames
+        frames = [frames[int(i * step)] for i in range(max_frames)]
+        fps /= step
+    return [fit(f, mode) for f in frames], max(1, min(30, round(fps)))

@@ -10,5 +10,6 @@ Exec=rt82-screen
 Icon=rt82-plasma
 Terminal=false
 Categories=Utility;Settings;HardwareSettings;Qt;KDE;
-Keywords=epomaker;rt82;keyboard;lcd;screen;клавиатура;экран;
+Keywords=epomaker;rt82;keyboard;lcd;screen;
+Keywords[ru]=epomaker;rt82;клавиатура;экран;
 StartupNotify=true

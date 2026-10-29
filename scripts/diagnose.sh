@@ -1,7 +1,7 @@
 #!/bin/bash
 # Collects what is needed to debug the RT82 on this machine into one file.
-#   boot/diagnose.sh              -> rt82-diagnose-<date>.txt in the current directory
-# Run as root (su -c 'boot/diagnose.sh' or sudo) to include the initrd contents and the GRUB config.
+#   scripts/diagnose.sh   -> rt82-diagnose-<date>.txt in the current directory
+# Run as root (su -c 'scripts/diagnose.sh' or sudo) to include the initrd contents and the GRUB config.
 set -uo pipefail
 PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin"
 
@@ -12,12 +12,12 @@ section() { printf '\n===== %s =====\n' "$*"; }
 run() { printf '$ %s\n' "$*"; "$@" 2>&1; }
 
 {
-	section "система"
+	section "system"
 	cat /etc/os-release 2>/dev/null | grep -E '^(PRETTY_NAME|VERSION_ID)='
-	echo "ядро: $KERNEL"
-	echo "загрузка: $([ -d /sys/firmware/efi ] && echo UEFI || echo BIOS/legacy)"
+	echo "kernel: $KERNEL"
+	echo "boot: $([ -d /sys/firmware/efi ] && echo UEFI || echo BIOS/legacy)"
 	command -v mokutil >/dev/null && run mokutil --sb-state
-	echo "сеанс: ${XDG_SESSION_TYPE:-?} ${XDG_CURRENT_DESKTOP:-}"
+	echo "session: ${XDG_SESSION_TYPE:-?} ${XDG_CURRENT_DESKTOP:-}"
 
 	section "USB"
 	command -v lsusb >/dev/null && { run lsusb -d 36b0:; run lsusb -d 1919:; run lsusb -t; }
@@ -37,9 +37,9 @@ run() { printf '$ %s\n' "$*"; "$@" 2>&1; }
 		command -v getfacl >/dev/null && getfacl -p "$node" 2>/dev/null | grep -v '^#' | sed 's/^/   /'
 		echo "   descriptor: $(od -An -tx1 -N8 "$h/device/report_descriptor" | tr -s ' ')"
 	done
-	ls -l /etc/udev/rules.d/*rt82* 2>/dev/null || echo "udev-правило RT82 не установлено"
+	ls -l /etc/udev/rules.d/*rt82* 2>/dev/null || echo "RT82 udev rule not installed"
 
-	section "драйверы клавиатуры (по sysfs)"
+	section "keyboard drivers (sysfs)"
 	for ev in /sys/class/input/input*; do
 		dev="$(readlink -f "$ev")"
 		case "$dev" in */usb*) ;; *) continue ;; esac
@@ -59,10 +59,10 @@ run() { printf '$ %s\n' "$*"; "$@" 2>&1; }
 	ls /etc/initrd.mk.d 2>/dev/null
 	for img in "/boot/initrd-$KERNEL.img" "/boot/initramfs-$KERNEL.img" "/boot/initrd.img-$KERNEL"; do
 		[ -e "$img" ] || continue
-		echo "образ: $img"
+		echo "image: $img"
 		for t in initrd-ls lsinitrd lsinitramfs; do
 			command -v $t >/dev/null || continue
-			$t "$img" 2>/dev/null | grep -E '(usbhid|hid-generic|hid_generic|xhci|ehci|ohci|uhci|/hid\.ko|cryptsetup|plymouth)' | sed 's/^/   /'
+			$t "$img" 2>/dev/null | grep -E '(usbhid|hid-generic|hid_generic|xhci|ehci|ohci|uhci|/hid\.ko|cryptsetup|plymouthd)' | grep -v /themes/ | sed 's/^/   /'
 			break
 		done
 	done
@@ -76,8 +76,8 @@ run() { printf '$ %s\n' "$*"; "$@" 2>&1; }
 		[ -r "$f" ] && { echo "--- $f"; grep -E 'terminal_input|insmod (usb|ohci|uhci|ehci|at_keyboard|usb_keyboard|cryptodisk|luks)|password' "$f" | sort | uniq -c; }
 	done
 
-	section "журнал ядра (USB/HID)"
-	dmesg 2>/dev/null | grep -iE '36b0|1919|rt82|epomaker|usbhid|hid-generic' | tail -40 || echo "(dmesg недоступен без прав root)"
+	section "kernel log (USB/HID)"
+	dmesg 2>/dev/null | grep -iE '36b0|1919|rt82|epomaker|usbhid|hid-generic' | tail -40 || echo "(dmesg needs root)"
 } > "$OUT"
 
-echo "Сохранено в $OUT"
+echo "Saved to $OUT"

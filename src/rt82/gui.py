@@ -11,16 +11,15 @@ import datetime as dt
 import sys
 import time
 from pathlib import Path
-from typing import Optional
 
 from . import __version__, qgif
 from .config import Settings, load_layout, save_layout
-from .data import DataHub
 from .live import LiveConfig
-from .protocol import HEIGHT, MAX_SLOTS, QGIF_HEIGHT, WIDTH
+from .protocol import HEIGHT, MAX_FRAMES, MAX_SLOTS, QGIF_HEIGHT, VERIFIED_UPLOAD_BYTES, WIDTH
 from .qt import QtCore, QtGui, QtWidgets, Signal
 from .render import FIT_MODES, load_frames, to_rgb
-from .service import Controller
+from .service import FROZEN, Controller
+from .sources import DataHub
 from .widgets import METRICS, TYPES, Context, Prop, new_widget, props_of, render_layout, renderer
 
 Qt = QtCore.Qt
@@ -44,16 +43,18 @@ class Canvas(QtWidgets.QWidget):
     selected = Signal(int)
     geometry_changed = Signal()
 
-    def __init__(self, window: "MainWindow"):
+    def __init__(self, window: MainWindow):
         super().__init__()
         self.win = window
-        self.sel: Optional[int] = None
-        self._drag: Optional[tuple[str, QtCore.QPointF, dict]] = None
+        self.sel: int | None = None
+        self._drag: tuple[str, QtCore.QPointF, dict] | None = None
         self.setFixedSize(WIDTH * SCALE + 2, HEIGHT * SCALE + 2)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.setToolTip("Щёлкните виджет, чтобы выбрать; тащите — переместить, за правый нижний угол — изменить размер.\n"
-                        "Стрелки сдвигают на 1 px (с Shift — размер).")
+        self.setToolTip(
+            "Click a widget to select it; drag to move it, drag its bottom-right corner to resize.\n"
+            "Arrow keys move by 1 px (with Shift: resize). Delete removes it."
+        )
 
     def paintEvent(self, e):
         img = render_layout(self.win.layout, Context(time.time(), self.win.hub.snapshot(), preview=True), self.sel)
@@ -68,7 +69,7 @@ class Canvas(QtWidgets.QWidget):
         pos = e.position()
         return QtCore.QPointF((pos.x() - 1) / SCALE, (pos.y() - 1) / SCALE)
 
-    def _hit(self, pt: QtCore.QPointF) -> Optional[int]:
+    def _hit(self, pt: QtCore.QPointF) -> int | None:
         widgets = self.win.layout["widgets"]
         for i in range(len(widgets) - 1, -1, -1):
             w = widgets[i]
@@ -119,7 +120,9 @@ class Canvas(QtWidgets.QWidget):
     def keyPressEvent(self, e):
         if self.sel is None:
             return super().keyPressEvent(e)
-        d = {Qt.Key.Key_Left: (-1, 0), Qt.Key.Key_Right: (1, 0), Qt.Key.Key_Up: (0, -1), Qt.Key.Key_Down: (0, 1)}.get(e.key())
+        d = {Qt.Key.Key_Left: (-1, 0), Qt.Key.Key_Right: (1, 0), Qt.Key.Key_Up: (0, -1), Qt.Key.Key_Down: (0, 1)}.get(
+            e.key()
+        )
         if e.key() == Qt.Key.Key_Delete:
             self.win.remove_widget()
             return
@@ -153,7 +156,7 @@ class ColorButton(QtWidgets.QPushButton):
         self.setStyleSheet(f"background:{color};color:{fg}")
 
     def _pick(self):
-        c = QtWidgets.QColorDialog.getColor(QtGui.QColor(self.color), self, "Цвет")
+        c = QtWidgets.QColorDialog.getColor(QtGui.QColor(self.color), self, "Color")
         if c.isValid():
             self.set(c.name())
             self.changed.emit(c.name())
@@ -208,7 +211,9 @@ def editor_for(prop: Prop, value, on_change, parent) -> QtWidgets.QWidget:
         edit.editingFinished.connect(lambda: on_change(edit.text()))
 
         def browse():
-            path, _ = QtWidgets.QFileDialog.getOpenFileName(parent, "Картинка", str(Path.home()), "Изображения (*.png *.jpg *.jpeg *.gif *.webp *.svg *.bmp)")
+            path, _ = QtWidgets.QFileDialog.getOpenFileName(
+                parent, "Image", str(Path.home()), "Images (*.png *.jpg *.jpeg *.gif *.webp *.svg *.bmp)"
+            )
             if path:
                 edit.setText(path)
                 on_change(path)
@@ -221,15 +226,15 @@ def editor_for(prop: Prop, value, on_change, parent) -> QtWidgets.QWidget:
 
 
 class PropertyPanel(QtWidgets.QScrollArea):
-    def __init__(self, window: "MainWindow"):
+    def __init__(self, window: MainWindow):
         super().__init__()
         self.win = window
         self.setWidgetResizable(True)
-        self.index: Optional[int] = None
+        self.index: int | None = None
         self.geo: dict[str, QtWidgets.QSpinBox] = {}
         self.show_widget(None)
 
-    def show_widget(self, index: Optional[int]) -> None:
+    def show_widget(self, index: int | None) -> None:
         self.index = index
         body = QtWidgets.QWidget()
         form = QtWidgets.QFormLayout(body)
@@ -241,28 +246,56 @@ class PropertyPanel(QtWidgets.QScrollArea):
             t = TYPES[w["type"]]
             title = QtWidgets.QLabel(f"<b>{t.title}</b>")
             form.addRow(title)
-            for key, label, hi in (("x", "X", WIDTH), ("y", "Y", HEIGHT), ("w", "Ширина", 400), ("h", "Высота", 400)):
+            for key, label, hi in (("x", "X", WIDTH), ("y", "Y", HEIGHT), ("w", "Width", 400), ("h", "Height", 400)):
                 sb = QtWidgets.QSpinBox()
                 sb.setRange(-400 if key in "xy" else 1, hi)
                 sb.setValue(int(w[key]))
                 sb.valueChanged.connect(lambda v, key=key: self._set_geo(key, v))
                 self.geo[key] = sb
                 form.addRow(label, sb)
-            hidden = QtWidgets.QCheckBox("Скрыть")
+            hidden = QtWidgets.QCheckBox("Hidden")
             hidden.setChecked(bool(w.get("hidden")))
             hidden.toggled.connect(lambda v: self._set_raw("hidden", v))
             form.addRow(hidden)
             props = props_of(w)
             for prop in t.props:
-                form.addRow(prop.label, editor_for(prop, props[prop.key], lambda v, k=prop.key: self._set_prop(k, v), self))
+                form.addRow(
+                    prop.label, editor_for(prop, props[prop.key], lambda v, k=prop.key: self._set_prop(k, v), self)
+                )
         self.setWidget(body)
 
     def _background_form(self, form: QtWidgets.QFormLayout) -> None:
         L = self.win.layout
-        form.addRow(QtWidgets.QLabel("<b>Фон экрана</b><br><small>Выберите виджет на экране, чтобы изменить его.</small>"))
-        form.addRow("Цвет", editor_for(Prop("background", "", "color", ""), L.get("background", "#000000"), lambda v: self._set_layout("background", v), self))
-        form.addRow("Картинка", editor_for(Prop("background_image", "", "file", ""), L.get("background_image", ""), lambda v: self._set_layout("background_image", v), self))
-        form.addRow("Масштаб", editor_for(Prop("background_mode", "", "choice", "cover", FIT_MODES), L.get("background_mode", "cover"), lambda v: self._set_layout("background_mode", v), self))
+        form.addRow(
+            QtWidgets.QLabel("<b>Screen background</b><br><small>Select a widget on the screen to edit it.</small>")
+        )
+        form.addRow(
+            "Color",
+            editor_for(
+                Prop("background", "", "color", ""),
+                L.get("background", "#000000"),
+                lambda v: self._set_layout("background", v),
+                self,
+            ),
+        )
+        form.addRow(
+            "Image",
+            editor_for(
+                Prop("background_image", "", "file", ""),
+                L.get("background_image", ""),
+                lambda v: self._set_layout("background_image", v),
+                self,
+            ),
+        )
+        form.addRow(
+            "Scaling",
+            editor_for(
+                Prop("background_mode", "", "choice", "cover", FIT_MODES),
+                L.get("background_mode", "cover"),
+                lambda v: self._set_layout("background_mode", v),
+                self,
+            ),
+        )
 
     def refresh_geometry(self) -> None:
         if self.index is None:
@@ -305,6 +338,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.hub.configure(self.layout)
         self.hub.start()
         self.quitting = False
+        self._last_state = ""
+        self._told_about_tray = False
 
         self.bridge = Bridge()
         self.bridge.log.connect(self._append_log)
@@ -335,7 +370,7 @@ class MainWindow(QtWidgets.QMainWindow):
     # UI -------------------------------------------------------------------
 
     def _build(self) -> None:
-        tb = self.addToolBar("Главное")
+        tb = self.addToolBar("Main")
         tb.setObjectName("main")
         tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
 
@@ -343,7 +378,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for name, t in TYPES.items():
             self.add_menu.addAction(t.title, lambda name=name: self.add_widget(name))
         add_btn = QtWidgets.QToolButton()
-        add_btn.setText("Добавить виджет")
+        add_btn.setText("Add widget")
         add_btn.setIcon(QtGui.QIcon.fromTheme("list-add"))
         add_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         add_btn.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -351,29 +386,31 @@ class MainWindow(QtWidgets.QMainWindow):
         tb.addWidget(add_btn)
         tb.addSeparator()
 
-        self.live_action = QtGui.QAction(QtGui.QIcon.fromTheme("media-playback-start"), "Живой режим", self, checkable=True)
-        self.live_action.setToolTip("Виджеты обновляются на клавиатуре постоянно (без «Downloading»)")
+        self.live_action = QtGui.QAction(
+            QtGui.QIcon.fromTheme("media-playback-start"), "Live mode", self, checkable=True
+        )
+        self.live_action.setToolTip("Keep the widgets on the keyboard screen up to date")
         self.live_action.toggled.connect(self.set_live)
         tb.addAction(self.live_action)
-        send = tb.addAction(QtGui.QIcon.fromTheme("document-send"), "Отправить снимок", self.send_snapshot)
-        send.setToolTip("Отрисовать раскладку один раз и сохранить на клавиатуре картинкой")
-        tb.addAction(QtGui.QIcon.fromTheme("folder-pictures"), "GIF/картинки…", self.upload_media)
-        tb.addAction(QtGui.QIcon.fromTheme("chronometer"), "Время", self.sync_time)
-        self.pause_action = QtGui.QAction(QtGui.QIcon.fromTheme("media-playback-pause"), "Пауза", self, checkable=True)
-        self.pause_action.setToolTip("Отпустить клавиатуру, например, чтобы открыть Epomaker Hub в браузере")
+        send = tb.addAction(QtGui.QIcon.fromTheme("document-send"), "Send snapshot", self.send_snapshot)
+        send.setToolTip("Render the layout once and store it on the keyboard as a picture")
+        tb.addAction(QtGui.QIcon.fromTheme("folder-pictures"), "Pictures/GIFs…", self.upload_media)
+        tb.addAction(QtGui.QIcon.fromTheme("chronometer"), "Set clock", self.sync_time)
+        self.pause_action = QtGui.QAction(QtGui.QIcon.fromTheme("media-playback-pause"), "Pause", self, checkable=True)
+        self.pause_action.setToolTip("Release the keyboard, e.g. to use Epomaker Hub in a browser")
         self.pause_action.toggled.connect(self.ctl.set_paused)
         tb.addAction(self.pause_action)
 
-        menu = self.menuBar().addMenu("&Файл")
-        menu.addAction("Открыть раскладку…", self.open_layout)
-        menu.addAction("Сохранить раскладку как…", self.save_layout_as)
-        menu.addAction("Экспорт превью PNG…", self.export_png)
+        menu = self.menuBar().addMenu("&File")
+        menu.addAction("Open layout…", self.open_layout)
+        menu.addAction("Save layout as…", self.save_layout_as)
+        menu.addAction("Export preview PNG…", self.export_png)
         menu.addSeparator()
-        menu.addAction("Настройки…", self.edit_settings)
+        menu.addAction(QtGui.QIcon.fromTheme("configure"), "Settings…", self.edit_settings)
         menu.addSeparator()
-        menu.addAction(QtGui.QIcon.fromTheme("application-exit"), "Выход", self.quit)
-        helpm = self.menuBar().addMenu("&Справка")
-        helpm.addAction("О программе", self.about)
+        menu.addAction(QtGui.QIcon.fromTheme("application-exit"), "Quit", self.quit)
+        helpm = self.menuBar().addMenu("&Help")
+        helpm.addAction("About", self.about)
 
         self.canvas = Canvas(self)
         self.canvas.selected.connect(lambda i: self._select(None if i < 0 else i, from_canvas=True))
@@ -383,11 +420,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.list.currentRowChanged.connect(lambda r: self._select(r if r >= 0 else None))
         btns = QtWidgets.QHBoxLayout()
         for icon, tip, fn in (
-            ("go-up", "Выше (поверх)", lambda: self.move_widget(1)),
-            ("go-down", "Ниже", lambda: self.move_widget(-1)),
-            ("edit-copy", "Дублировать", self.duplicate_widget),
-            ("list-remove", "Удалить", self.remove_widget),
-            ("edit-select-none", "Фон экрана", lambda: self._select(None)),
+            ("go-up", "Raise (draw on top)", lambda: self.move_widget(1)),
+            ("go-down", "Lower", lambda: self.move_widget(-1)),
+            ("edit-copy", "Duplicate", self.duplicate_widget),
+            ("list-remove", "Remove", self.remove_widget),
+            ("edit-select-none", "Screen background", lambda: self._select(None)),
         ):
             b = QtWidgets.QToolButton()
             b.setIcon(QtGui.QIcon.fromTheme(icon))
@@ -400,18 +437,20 @@ class MainWindow(QtWidgets.QMainWindow):
 
         left = QtWidgets.QVBoxLayout()
         left.addWidget(self.canvas, 0, Qt.AlignmentFlag.AlignTop)
-        hint = QtWidgets.QLabel("На клавиатуре: Fn + правый Shift — страница GIF, где показываются виджеты; "
-                                "Fn + Enter — переключить страницы экрана.")
+        hint = QtWidgets.QLabel(
+            "On the keyboard: Fn + Right Shift shows the GIF page, where widgets and pictures "
+            "appear; Fn + Enter cycles the screen pages."
+        )
         hint.setWordWrap(True)
         hint.setMaximumWidth(WIDTH * SCALE)
         left.addWidget(hint)
         self.log_view = QtWidgets.QPlainTextEdit(readOnly=True)
         self.log_view.setMaximumBlockCount(500)
-        self.log_view.setPlaceholderText("Журнал")
+        self.log_view.setPlaceholderText("Log")
         left.addWidget(self.log_view, 1)
 
         right = QtWidgets.QVBoxLayout()
-        right.addWidget(QtWidgets.QLabel("Виджеты (сверху — поверх остальных):"))
+        right.addWidget(QtWidgets.QLabel("Widgets (topmost first):"))
         right.addWidget(self.list, 1)
         right.addLayout(btns)
         right.addWidget(self.props, 2)
@@ -432,21 +471,23 @@ class MainWindow(QtWidgets.QMainWindow):
     def _build_tray(self) -> None:
         self.tray = QtWidgets.QSystemTrayIcon(app_icon(), self)
         m = QtWidgets.QMenu()
-        m.addAction("Показать окно", self.show_window)
+        m.addAction("Show window", self.show_window)
         m.addAction(self.live_action)
-        m.addAction("Синхронизировать время", self.sync_time)
-        m.addAction("Отправить снимок раскладки", self.send_snapshot)
+        m.addAction("Set keyboard clock", self.sync_time)
+        m.addAction("Send layout snapshot", self.send_snapshot)
         m.addAction(self.pause_action)
         m.addSeparator()
-        m.addAction("Выход", self.quit)
+        m.addAction("Quit", self.quit)
         self.tray.setContextMenu(m)
-        self.tray.activated.connect(lambda reason: self.show_window() if reason == QtWidgets.QSystemTrayIcon.ActivationReason.Trigger else None)
+        self.tray.activated.connect(
+            lambda reason: self.show_window() if reason == QtWidgets.QSystemTrayIcon.ActivationReason.Trigger else None
+        )
         self.tray.setToolTip("RT82 Screen")
         self.tray.show()
 
     # layout editing ---------------------------------------------------------
 
-    def _refresh_list(self, select: Optional[int] = None) -> None:
+    def _refresh_list(self, select: int | None = None) -> None:
         self.list.blockSignals(True)
         self.list.clear()
         widgets = self.layout["widgets"]
@@ -455,9 +496,18 @@ class MainWindow(QtWidgets.QMainWindow):
             w = widgets[i]
             t = TYPES.get(w["type"])
             p = w.get("props", {})
-            detail = (p.get("text") or p.get("label") or p.get("city") or p.get("command") or METRICS.get(p.get("metric", ""))
-                      or Path(p.get("path", "")).name or p.get("format"))
-            item = QtWidgets.QListWidgetItem(f"{t.title if t else w['type']}{': ' + str(detail)[:30] if detail else ''}")
+            detail = (
+                p.get("text")
+                or p.get("label")
+                or p.get("city")
+                or p.get("command")
+                or METRICS.get(p.get("metric", ""))
+                or Path(p.get("path", "")).name
+                or p.get("format")
+            )
+            item = QtWidgets.QListWidgetItem(
+                f"{t.title if t else w['type']}{': ' + str(detail)[:30] if detail else ''}"
+            )
             if w.get("hidden"):
                 item.setForeground(QtGui.QColor("#888888"))
             self.list.addItem(item)
@@ -465,7 +515,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.list.setCurrentRow(len(widgets) - 1 - select)
         self.list.blockSignals(False)
 
-    def _select(self, index: Optional[int], from_canvas: bool = False) -> None:
+    def _select(self, index: int | None, from_canvas: bool = False) -> None:
         widgets = self.layout["widgets"]
         if index is not None and not from_canvas:
             index = len(widgets) - 1 - index  # list rows are reversed
@@ -534,7 +584,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             save_layout(self.layout)
         except OSError as e:
-            self._append_log(f"не удалось сохранить раскладку: {e}")
+            self._append_log(f"could not save the layout: {e}")
 
     # device actions -----------------------------------------------------------
 
@@ -543,7 +593,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if err:
                 self.notify(f"{what}: {err}", error=True)
             else:
-                self.notify(f"{what}: готово")
+                self.notify(f"{what}: done")
             if then:
                 then(err, res)
 
@@ -554,7 +604,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.settings.save()
         self.ctl.set_live(on, lambda: renderer(lambda: self._live_layout, self.hub.snapshot), self.settings.live_config)
         if on:
-            self._append_log("живой режим включён (при запуске экран на пару секунд покажет «Downloading»)")
+            self._append_log("live mode on (the screen is erased once at start, which takes a few seconds)")
 
     def _stop_live_for_upload(self) -> None:
         if self.live_action.isChecked():
@@ -564,18 +614,25 @@ class MainWindow(QtWidgets.QMainWindow):
         self._stop_live_for_upload()
         img = render_layout(self.layout, Context(time.time(), self.hub.snapshot()))
         data = qgif.encode([to_rgb(img)], WIDTH, QGIF_HEIGHT, 1)
-        self.ctl.submit("отправка снимка", lambda s: s.upload([data]), self._done("Снимок отправлен на клавиатуру"))
+        self.ctl.submit("snapshot upload", lambda s: s.upload([data]), self._done("Snapshot sent to the keyboard"))
 
     def upload_media(self) -> None:
         paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
-            self, f"До {MAX_SLOTS} картинок или GIF", str(Path.home()), "Изображения и анимации (*.gif *.png *.jpg *.jpeg *.webp *.bmp *.qgif)"
+            self,
+            f"Up to {MAX_SLOTS} pictures or GIFs",
+            str(Path.home()),
+            "Images and animations (*.gif *.png *.jpg *.jpeg *.webp *.bmp *.qgif)",
         )
         if not paths:
             return
         if len(paths) > MAX_SLOTS:
-            QtWidgets.QMessageBox.warning(self, "RT82", f"Клавиатура хранит до {MAX_SLOTS} экранов; будут загружены первые {MAX_SLOTS}.")
+            QtWidgets.QMessageBox.warning(
+                self, "RT82", f"The keyboard stores up to {MAX_SLOTS} screens; the first {MAX_SLOTS} will be uploaded."
+            )
             paths = paths[:MAX_SLOTS]
-        fit, ok = QtWidgets.QInputDialog.getItem(self, "Масштаб", "Как вписать в 240×135:", list(FIT_MODES.values()), 0, False)
+        fit, ok = QtWidgets.QInputDialog.getItem(
+            self, "Scaling", "How to fit into 240×135:", list(FIT_MODES.values()), 0, False
+        )
         if not ok:
             return
         mode = next(k for k, v in FIT_MODES.items() if v == fit)
@@ -586,19 +643,29 @@ class MainWindow(QtWidgets.QMainWindow):
                 if p.endswith(".qgif"):
                     images.append(Path(p).read_bytes())
                     continue
-                frames, fps = load_frames(p, mode)
+                frames, fps = load_frames(p, mode, MAX_FRAMES if self.settings.limit_frames else 0)
                 images.append(qgif.encode([to_rgb(f) for f in frames], WIDTH, QGIF_HEIGHT, fps))
-                self._append_log(f"{Path(p).name}: {len(frames)} кадр(ов), {fps} fps, {len(images[-1]) // 1024} КБ")
+                self._append_log(f"{Path(p).name}: {len(frames)} frame(s), {fps} fps, {len(images[-1]) // 1024} KB")
         except (OSError, ValueError) as e:
             QtWidgets.QMessageBox.critical(self, "RT82", str(e))
             return
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
+        total = sum(map(len, images))
+        if total > VERIFIED_UPLOAD_BYTES:
+            answer = QtWidgets.QMessageBox.question(
+                self,
+                "RT82",
+                f"{total // 1024} KB is more than has been tried on an RT82. "
+                "If the screen shows garbage, use fewer frames. Upload anyway?",
+            )
+            if answer != QtWidgets.QMessageBox.StandardButton.Yes:
+                return
         self._stop_live_for_upload()
-        self.ctl.submit("загрузка картинок", lambda s: s.upload(images), self._done("Картинки загружены"))
+        self.ctl.submit("picture upload", lambda s: s.upload(images), self._done("Pictures uploaded"))
 
     def sync_time(self) -> None:
-        self.ctl.sync_now(self._done("Время синхронизировано"))
+        self.ctl.sync_now(self._done("Keyboard clock set"))
 
     # misc -------------------------------------------------------------------
 
@@ -606,19 +673,30 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log_view.appendPlainText(f"{dt.datetime.now():%H:%M:%S}  {msg}")
 
     def _on_state(self, s: str) -> None:
-        self.status.setText(f"Клавиатура: {s}")
+        self.status.setText(f"Keyboard: {s}")
         self.tray.setToolTip(f"RT82 Screen — {s}")
+        if s == FROZEN and self._last_state != FROZEN:
+            self.notify(
+                "The keyboard screen stopped responding. Unplug the cable, switch the keyboard off with its "
+                "power switch for ~10 s, then switch it on and plug it back in.",
+                error=True,
+            )
+        self._last_state = s
 
     def notify(self, text: str, error: bool = False) -> None:
         self._append_log(text)
         if not self.isVisible():
-            icon = QtWidgets.QSystemTrayIcon.MessageIcon.Warning if error else QtWidgets.QSystemTrayIcon.MessageIcon.Information
+            icon = (
+                QtWidgets.QSystemTrayIcon.MessageIcon.Warning
+                if error
+                else QtWidgets.QSystemTrayIcon.MessageIcon.Information
+            )
             self.tray.showMessage("RT82 Screen", text, icon, 4000)
         elif error:
             self.statusBar().showMessage(text, 8000)
 
     def open_layout(self) -> None:
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Открыть раскладку", str(Path.home()), "Раскладка RT82 (*.json)")
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Open layout", str(Path.home()), "RT82 layout (*.json)")
         if path:
             self.layout = load_layout(Path(path))
             self._refresh_list()
@@ -626,45 +704,63 @@ class MainWindow(QtWidgets.QMainWindow):
             self.changed()
 
     def save_layout_as(self) -> None:
-        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Сохранить раскладку", str(Path.home() / "rt82-layout.json"), "Раскладка RT82 (*.json)")
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Save layout", str(Path.home() / "rt82-layout.json"), "RT82 layout (*.json)"
+        )
         if path:
             save_layout(self.layout, Path(path))
 
     def export_png(self) -> None:
-        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Экспорт", str(Path.home() / "rt82.png"), "PNG (*.png)")
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Export", str(Path.home() / "rt82.png"), "PNG (*.png)")
         if path:
             render_layout(self.layout, Context(time.time(), self.hub.snapshot())).copy(0, 0, WIDTH, HEIGHT).save(path)
 
     def edit_settings(self) -> None:
         d = QtWidgets.QDialog(self)
-        d.setWindowTitle("Настройки")
+        d.setWindowTitle("Settings")
         f = QtWidgets.QFormLayout(d)
-        sync = QtWidgets.QCheckBox("Синхронизировать время при подключении и после сна")
+        tray = QtWidgets.QCheckBox("Keep running in the system tray when the window is closed")
+        tray.setChecked(self.settings.tray_on_close)
+        tray.setToolTip("When off, closing the window quits the app (the clock is then only set while it runs).")
+        sync = QtWidgets.QCheckBox("Set the keyboard clock on connect and after suspend")
         sync.setChecked(self.settings.auto_sync_time)
-        hours = QtWidgets.QDoubleSpinBox(suffix=" ч", minimum=0.25, maximum=168, value=self.settings.resync_hours)
+        hours = QtWidgets.QDoubleSpinBox(suffix=" h", minimum=0.25, maximum=168, value=self.settings.resync_hours)
+        limit = QtWidgets.QCheckBox(f"Thin out animations to {MAX_FRAMES} frames (Epomaker Hub's limit)")
+        limit.setChecked(self.settings.limit_frames)
         lc = self.settings.live_config
         fps = QtWidgets.QSpinBox(minimum=1, maximum=10, value=lc.fps)
-        fps.setToolTip("Кадров в секунду в живом режиме. 1 — бережнее к flash; 2+ — плавнее бегущая строка.")
-        area = QtWidgets.QSpinBox(minimum=4, maximum=28, value=lc.area_blocks, suffix=" × 64 КБ")
-        area.setToolTip("Сколько flash отводится под поток. Больше — реже стирание (меньше износ).")
-        seg = QtWidgets.QSpinBox(minimum=30, maximum=3600, value=int(lc.segment_seconds), suffix=" с")
-        seg.setToolTip("Как часто начинать новый поток, чтобы сбросить отставание экрана.")
+        fps.setToolTip("Frames per second in live mode. 1 is gentlest on the flash; 2+ scrolls text more smoothly.")
+        area = QtWidgets.QSpinBox(minimum=4, maximum=28, value=lc.area_blocks, suffix=" × 64 KB")
+        area.setToolTip("Flash used for the stream. More means fewer erases (less wear).")
+        seg = QtWidgets.QSpinBox(minimum=30, maximum=3600, value=int(lc.segment_seconds), suffix=" s")
+        seg.setToolTip("How often to start a fresh stream, which resets the screen's playback drift.")
+        f.addRow(tray)
         f.addRow(sync)
-        f.addRow("Повторная синхронизация каждые", hours)
-        f.addRow(QtWidgets.QLabel("<b>Живой режим</b>"))
-        f.addRow("Кадров в секунду", fps)
-        f.addRow("Область flash", area)
-        f.addRow("Новый поток каждые", seg)
-        bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel)
+        f.addRow("Set the clock again every", hours)
+        f.addRow(limit)
+        f.addRow(QtWidgets.QLabel("<b>Live mode</b>"))
+        f.addRow("Frames per second", fps)
+        f.addRow("Flash area", area)
+        f.addRow("New stream every", seg)
+        bb = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel
+        )
         bb.accepted.connect(d.accept)
         bb.rejected.connect(d.reject)
         f.addRow(bb)
         if d.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
+        self.settings.tray_on_close = tray.isChecked()
+        self.settings.limit_frames = limit.isChecked()
         self.settings.auto_sync_time = sync.isChecked()
         self.settings.resync_hours = hours.value()
-        self.settings.live_config = LiveConfig(fps=fps.value(), area_blocks=area.value(), segment_seconds=seg.value(),
-                                               lead_frames=lc.lead_frames, slowdown=lc.slowdown)
+        self.settings.live_config = LiveConfig(
+            fps=fps.value(),
+            area_blocks=area.value(),
+            segment_seconds=seg.value(),
+            lead_frames=lc.lead_frames,
+            slowdown=lc.slowdown,
+        )
         self.settings.save()
         self.ctl.auto_sync = self.settings.auto_sync_time
         self.ctl.resync_s = self.settings.resync_hours * 3600
@@ -673,9 +769,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def about(self) -> None:
         QtWidgets.QMessageBox.about(
-            self, "RT82 Screen",
-            f"<b>RT82 Screen {__version__}</b><br>Экран Epomaker RT82 из Linux без браузера.<br><br>"
-            "Протокол разобран в проектах guysoft/rt82display и wyattades/keyscreen.",
+            self,
+            "RT82 Screen",
+            f"<b>RT82 Screen {__version__}</b><br>The Epomaker RT82 keyboard screen on Linux, without a browser.<br><br>"
+            "Protocol research by guysoft/rt82display and wyattades/keyscreen.",
         )
 
     def show_window(self) -> None:
@@ -684,13 +781,23 @@ class MainWindow(QtWidgets.QMainWindow):
         self.activateWindow()
 
     def closeEvent(self, e):
-        if self.quitting or not QtWidgets.QSystemTrayIcon.isSystemTrayAvailable():
-            self._shutdown()
+        if self.quitting:
             e.accept()
+            return
+        if not self.settings.tray_on_close or not QtWidgets.QSystemTrayIcon.isSystemTrayAvailable():
+            e.accept()
+            self.quit()
             return
         e.ignore()
         self.hide()
-        self.tray.showMessage("RT82 Screen", "Приложение продолжает работать в трее.", QtWidgets.QSystemTrayIcon.MessageIcon.Information, 3000)
+        if not self._told_about_tray:
+            self._told_about_tray = True
+            self.tray.showMessage(
+                "RT82 Screen",
+                "Still running in the system tray. Change this in File → Settings.",
+                QtWidgets.QSystemTrayIcon.MessageIcon.Information,
+                3000,
+            )
 
     def _shutdown(self) -> None:
         self._save()
@@ -698,8 +805,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.ctl.shutdown()
 
     def quit(self) -> None:
+        if self.quitting:
+            return
         self.quitting = True
         self._shutdown()
+        self.tray.hide()
         self.app.quit()
 
 
@@ -708,7 +818,7 @@ def app_icon() -> QtGui.QIcon:
     if icon.isNull():
         icon = QtGui.QIcon.fromTheme("input-keyboard")
     if icon.isNull():
-        here = Path(__file__).resolve().parent / "data" / f"{APP_ID}.svg"
+        here = Path(__file__).resolve().parent / "resources" / f"{APP_ID}.svg"
         icon = QtGui.QIcon(str(here))
     return icon
 

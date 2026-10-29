@@ -1,8 +1,13 @@
 """A simulated RT82 screen controller for tests.
 
 Models what matters for correctness: the slot table, sessions, flash that
-must be erased before it is written, erase timing, and playback that reads
-frame records a few frames ahead of the picture on screen.
+must be erased before it is written, erase timing, playback that reads frame
+records a few frames ahead of the picture on screen, and the two failure
+modes seen on real hardware:
+
+* ``stuck``: a sequence was cut off and the controller ignores everything
+  until the session is closed (``11``) or the LCD is re-initialised (``1A``);
+* ``frozen``: nothing answers any more until a power cycle.
 """
 
 from __future__ import annotations
@@ -39,7 +44,6 @@ class FakeScreen:
         self.readahead = readahead
         self.slowdown = slowdown
         self.session = False
-        self.download = False
         self.table_page = bytearray(0x38)
         self.committed: tuple[list[tuple[int, int]], int] = ([], 0)
         self.replies: list[bytes] = []
@@ -47,8 +51,11 @@ class FakeScreen:
         self.max_erase_s = 0.0
         self.erases = 0
         self.erase_count_per_block = [0] * blocks
-        self.downloads = 0
-        self.shown: list[tuple[float, list[bytes]]] = []
+        self.erased_while_playing = 0
+        self.sent: list[int] = []
+        self.stuck = False
+        self.frozen = False
+        self.drop_reply: set[int] = set()  # commands whose next reply is lost (then stuck)
 
     # -- transport ---------------------------------------------------------
 
@@ -56,15 +63,24 @@ class FakeScreen:
         assert len(pkt) == 64 and pkt[0] == MAGIC, pkt[:8].hex()
         self.clock.t += 0.001
         cmd, addr, length, payload = pkt[1], pkt[2] | pkt[3] << 8 | pkt[4] << 16, pkt[5], pkt[8:]
-        reject = False
+        self.sent.append(cmd)
+        if self.frozen:
+            return
+        if self.stuck:
+            if cmd in (Cmd.END, Cmd.INIT_LCD):
+                self.stuck = self.session = False
+                self.replies.append(bytes([MAGIC, cmd]) + bytes(62))
+            return
+        if cmd in self.drop_reply:
+            self.drop_reply.discard(cmd)
+            self.stuck = True
+            return
         if cmd == Cmd.BEGIN:
             self.session = True
         elif cmd == Cmd.END:
-            self.session = self.download = False
+            self.session = False
         elif cmd == Cmd.START_DOWNLOAD:
-            self.download = True
-            self.downloads += 1
-            self.play = None  # shows "Downloading" 
+            raise ProtocolViolation("download mode (1B) freezes the controller after repeated use")
         elif cmd == Cmd.READ_TABLE:
             if addr:
                 raise ProtocolViolation("14 at a nonzero address freezes the controller")
@@ -80,19 +96,15 @@ class FakeScreen:
                 slots.append((e[0], e[2] | e[3] << 8 | e[4] << 16))
             self.committed = (slots, alloc)
         elif cmd == Cmd.ERASE:
-            if not (self.session or self.download):
+            if not self.session:
                 raise ProtocolViolation("18 outside a session freezes the controller")
             self._erase(self.committed[1])
         elif cmd == Cmd.WRITE:
-            if self.download and not self._erased_in_download:
-                raise ProtocolViolation("19 inside a download session freezes the controller")
             self._program(addr, payload[:length])
         elif cmd == Cmd.INIT_LCD:
             self._restart_playback()
-        self.replies.append(bytes([MAGIC, cmd, 0, 0, 0, 0, 0, 0x0F if reject else 0, 0, 2]) + bytes(54))
+        self.replies.append(bytes([MAGIC, cmd, 0, 0, 0, 0, 0, 0, 0, 2]) + bytes(54))
         self._advance_playback()
-
-    _erased_in_download = False
 
     def read_until(self, match, timeout: float) -> bytes:
         while self.replies:
@@ -121,17 +133,17 @@ class FakeScreen:
             self.flash[b * BLOCK : (b + 1) * BLOCK] = b"\xff" * BLOCK
             self.written[b * BLOCK : (b + 1) * BLOCK] = bytes(BLOCK)
             self.erase_count_per_block[b] += 1
-        if cost > 3.5 and not self.download:
+        if cost > 3.5:
             raise ProtocolViolation(f"erase took {cost:.1f}s: the controller drops off USB")
         self.max_erase_s = max(self.max_erase_s, cost)
         self.erases += 1
-        if self.download:
-            self._erased_in_download = True
         # The controller does not play while erasing; pretend time passes.
         self.clock.t += cost
-        if self.play and self.play["start"] * BLOCK < alloc * BLOCK:
-            # Erasing the image on screen shows white: a test failure.
-            raise ProtocolViolation("erased the image that is playing")
+        if self.play and self.play["start"] < alloc:
+            # The screen shows white until the next redraw (fine for an upload,
+            # a defect in live mode, whose tests check this counter).
+            self.erased_while_playing += 1
+            self.play = None
 
     def _program(self, addr: int, data: bytes) -> None:
         end = addr + len(data)
@@ -143,7 +155,6 @@ class FakeScreen:
     # -- playback ------------------------------------------------------------
 
     def _restart_playback(self) -> None:
-        self._erased_in_download = False
         slots, _ = self.committed
         if not slots:
             self.play = None
@@ -156,8 +167,15 @@ class FakeScreen:
         fps = (hdr[5] + 1) / 2
         count = hdr[6] << 8 | hdr[7]
         self.play = {
-            "start": start, "base": base, "t0": self.clock.t, "frame_s": self.slowdown / fps,
-            "count": count, "read": 0, "off": base + 10, "tiles": [bytes(8)] * TILES, "frames": [],
+            "start": start,
+            "base": base,
+            "t0": self.clock.t,
+            "frame_s": self.slowdown / fps,
+            "count": count,
+            "read": 0,
+            "off": base + 10,
+            "tiles": [bytes(8)] * TILES,
+            "frames": [],
         }
 
     def _read_record(self) -> None:

@@ -28,8 +28,9 @@ as_root() {
 		# root's login shell, which may not understand bash quoting.
 		local f rc=0
 		f="$(mktemp)"
+	# shellcheck disable=SC2016 # expanded by the root shell, not here
 		{ echo 'PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin"'; printf '%q ' "$@"; } > "$f"
-		echo "   sudo недоступен — введите пароль root (su):"
+		echo "   sudo is not available: enter the root password (su):"
 		su -c "bash $f" || rc=$?
 		rm -f "$f"
 		return "$rc"
@@ -48,7 +49,7 @@ target_user() {
 		u="$(logname 2>/dev/null || true)"
 	fi
 	if [ -z "$u" ] || [ "$u" = root ]; then
-		u="$(stat -c %U "$SRC" 2>/dev/null || true)"
+		u="$(stat -c %U "$ROOT" 2>/dev/null || true)"
 	fi
 	[ -n "$u" ] && [ "$u" != root ] && id "$u" >/dev/null 2>&1 || return 1
 	printf '%s\n' "$u"
@@ -77,7 +78,7 @@ run_as_user() {
 # when there is no user session to talk to.
 user_systemctl() {
 	if ! systemctl --user "$@"; then
-		echo "   не удалось выполнить «systemctl --user $*» (нет сеанса пользователя?)."
-		echo "   Выполните это сами после входа в систему."
+		echo "   could not run \"systemctl --user $*\" (no user session?)."
+		echo "   Run it yourself after logging in."
 	fi
 }

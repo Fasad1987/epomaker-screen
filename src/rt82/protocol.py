@@ -36,6 +36,8 @@ REJECTED = 0x0F  # reply byte 7
 WIDTH, HEIGHT = 240, 135
 QGIF_HEIGHT = 136  # QGIF works on 4x4 tiles; the last row is cut off by the panel
 MAX_SLOTS = 3  # the RT82 firmware shows up to 3 stored screens
+MAX_FRAMES = 40  # Epomaker Hub's limit per animation for this screen
+VERIFIED_UPLOAD_BYTES = 2048 * 1024  # uploads up to ~1.7 MB are known to work on an RT82
 
 
 class Kb:
@@ -66,7 +68,9 @@ class Cmd:
 LINKS = {0: "bluetooth", 1: "2.4g", 2: "usb"}
 
 
-def packet(cmd: int, payload: bytes | list[int] = b"", length: int = 0, addr: int = 0, size: int = SCREEN_REPORT) -> bytes:
+def packet(
+    cmd: int, payload: bytes | list[int] = b"", length: int = 0, addr: int = 0, size: int = SCREEN_REPORT
+) -> bytes:
     p = bytearray(size)
     p[0:6] = bytes([MAGIC, cmd, addr & 0xFF, (addr >> 8) & 0xFF, (addr >> 16) & 0xFF, length & 0xFF])
     data = bytes(payload)[: size - 8]
@@ -87,7 +91,18 @@ def time_digits(t: _dt.datetime) -> list[int]:
 
     weekday = (t.weekday() + 1) % 7  # Python: Monday = 0
     y = t.year
-    return [y // 1000 % 10, y // 100 % 10, y // 10 % 10, y % 10, *two(t.month), weekday, *two(t.day), *two(t.hour), *two(t.minute), *two(t.second)]
+    return [
+        y // 1000 % 10,
+        y // 100 % 10,
+        y // 10 % 10,
+        y % 10,
+        *two(t.month),
+        weekday,
+        *two(t.day),
+        *two(t.hour),
+        *two(t.minute),
+        *two(t.second),
+    ]
 
 
 @dataclass(frozen=True)

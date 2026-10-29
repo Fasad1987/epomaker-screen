@@ -13,20 +13,29 @@ import traceback
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-from .device import DeviceError, Keyboard, Screen, exclusive, keyboard_present
+from .device import POWER_CYCLE_HINT, DeviceError, Keyboard, Screen, ScreenFrozen, exclusive, keyboard_id
 from .live import LiveConfig, LiveStreamer
 
 Log = Callable[[str], None]
+Done = Callable[[Optional[Exception], object], None]
 RenderFactory = Callable[[], tuple[Callable[[float], bytes], bytes]]  # -> (render, fallback frame)
 
-LIVE_RETRY_S = 30.0  # repeated download sessions in quick succession can freeze the controller
+LIVE_RETRY_S = 30.0  # back-off after live mode failed
+
+# States reported through on_state.
+NO_KEYBOARD = "no keyboard"
+CONNECTED = "connected"
+LIVE = "live mode"
+LIVE_STARTING = "live mode: starting…"
+PAUSED = "paused: keyboard released"
+FROZEN = "screen not responding: power-cycle the keyboard"
 
 
 @dataclass
 class Job:
     name: str
     run: Callable[[Screen], object]
-    done: Callable[[Optional[Exception], object], None]
+    done: Done
 
 
 class Controller:
@@ -42,18 +51,19 @@ class Controller:
         self.auto_sync = auto_sync
         self.resync_s = max(0.25, resync_hours) * 3600
         self.paused = False
-        self._jobs: "queue.Queue[Job]" = queue.Queue()
+        self.frozen = False  # until the keyboard is unplugged or re-enumerates
+        self._jobs: queue.Queue[Job] = queue.Queue()
         self._stop = threading.Event()
         self._live_stop = threading.Event()
         self._live_wanted = False
-        self._live_factory: Optional[RenderFactory] = None
+        self._live_factory: RenderFactory | None = None
         self._live_config = LiveConfig()
         self._live_poke = threading.Event()  # wakes the live loop: stop request or inline time sync
         self._live_running = False
-        self._sync_waiters: list[Callable[[Optional[Exception], object], None]] = []
+        self._sync_waiters: list[Done] = []
         self._sync_lock = threading.Lock()
-        self._thread: Optional[threading.Thread] = None
-        self.state = "нет клавиатуры"
+        self._thread: threading.Thread | None = None
+        self.state = NO_KEYBOARD
         self._last_live_fail = 0.0
 
     # -- public API (any thread) ----------------------------------------
@@ -73,20 +83,21 @@ class Controller:
         if self._thread:
             self._thread.join(timeout)
 
-    def submit(self, name: str, run: Callable[[Screen], object], done: Callable[[Optional[Exception], object], None] = lambda e, r: None) -> None:
+    def submit(self, name: str, run: Callable[[Screen], object], done: Done = lambda e, r: None) -> None:
+        self.frozen = False  # an explicit request is worth one more try
         self._jobs.put(Job(name, run, done))
         self._stop_live()  # live mode yields to jobs and resumes afterwards
 
-    def sync_now(self, done=lambda e, r: None) -> None:
+    def sync_now(self, done: Done = lambda e, r: None) -> None:
         with self._sync_lock:
             if self._live_running:
                 # Done between frames, without restarting live mode.
                 self._sync_waiters.append(done)
                 self._live_poke.set()
                 return
-        self.submit("синхронизация времени", lambda s: s.sync_time(), done)
+        self.submit("time sync", lambda s: s.sync_time(), done)
 
-    def set_live(self, enabled: bool, factory: Optional[RenderFactory] = None, config: Optional[LiveConfig] = None) -> None:
+    def set_live(self, enabled: bool, factory: RenderFactory | None = None, config: LiveConfig | None = None) -> None:
         if factory is not None:
             self._live_factory = factory
         if config is not None:
@@ -100,17 +111,23 @@ class Controller:
         """Releases the keyboard entirely (e.g. to use Epomaker Hub in a browser)."""
         self.paused = paused
         self._stop_live()
-        self._set_state("пауза: клавиатура свободна" if paused else self.state)
+        self._set_state(PAUSED if paused else self.state)
 
     # -- worker -----------------------------------------------------------
 
     def _set_state(self, s: str) -> None:
-        if not self.paused or s.startswith("пауза"):
+        if not self.paused or s == PAUSED:
             self.state = s
         self.on_state(s)
 
+    def _mark_frozen(self, e: Exception) -> None:
+        if not self.frozen:
+            self.frozen = True
+            self.log(f"{e}")
+        self._set_state(FROZEN)
+
     def _loop(self) -> None:
-        present = False
+        connection: str | None = None
         last_sync = 0.0
         last_wall, last_mono = time.time(), time.monotonic()
         self._set_state(self.state)
@@ -120,17 +137,30 @@ class Controller:
             jumped = abs((wall - last_wall) - (mono - last_mono)) > 5
             last_wall, last_mono = wall, mono
 
-            now_present = keyboard_present()
-            if now_present != present:
-                present = now_present
-                self.log("клавиатура подключена" if present else "клавиатура отключена")
-                self._set_state("подключена" if present else "нет клавиатуры")
+            now = keyboard_id()
+            if now != connection:
+                self.log(
+                    "keyboard reconnected"
+                    if connection and now
+                    else "keyboard connected"
+                    if now
+                    else "keyboard disconnected"
+                )
+                connection = now
+                present = now is not None
+                self.frozen = False  # a re-plug or power cycle gives the controller a fresh start
+                self._set_state(CONNECTED if present else NO_KEYBOARD)
                 if present:
                     time.sleep(1.0)  # let it finish enumerating
                     last_sync = 0.0
 
-            if self.paused or not present:
-                self._drain_jobs(DeviceError("клавиатура не подключена" if not present else "пауза"))
+            present = connection is not None
+            if self.paused or not present or self.frozen:
+                if self.frozen:
+                    reason: Exception = ScreenFrozen(f"the screen controller does not answer. {POWER_CYCLE_HINT}")
+                else:
+                    reason = DeviceError("paused" if self.paused else "keyboard not connected")
+                self._drain_jobs(reason)
                 self._stop.wait(2.0)
                 continue
 
@@ -146,12 +176,19 @@ class Controller:
                             s.sync_time()
                         finally:
                             s.close()
-                    self.log("время на клавиатуре синхронизировано")
+                    self.log("keyboard clock synchronised")
+                except ScreenFrozen as e:
+                    self._mark_frozen(e)
                 except (DeviceError, OSError) as e:
-                    self.log(f"не удалось синхронизировать время: {e}")
+                    self.log(f"could not set the keyboard clock: {e}")
                 last_sync = mono
 
-            if self._live_wanted and self._live_factory and time.monotonic() - self._last_live_fail > LIVE_RETRY_S:
+            if (
+                self._live_wanted
+                and self._live_factory
+                and not self.frozen
+                and time.monotonic() - self._last_live_fail > LIVE_RETRY_S
+            ):
                 self._run_live()
                 continue
 
@@ -166,7 +203,7 @@ class Controller:
             job.done(err, None)
 
     def _run_jobs(self) -> None:
-        while True:
+        while not self.frozen:
             try:
                 job = self._jobs.get_nowait()
             except queue.Empty:
@@ -177,23 +214,29 @@ class Controller:
                     s = Screen.connect(log=self.log)
                     try:
                         result = job.run(s)
+                    except DeviceError:
+                        s.recover()  # close what the failed sequence left open
+                        raise
                     finally:
                         s.close()
-            except Exception as e:  # report every failure to the caller
-                self.log(f"{job.name}: ошибка: {e}")
-                self._set_state("подключена")
+            except ScreenFrozen as e:
+                self._mark_frozen(e)
                 job.done(e, None)
                 continue
-            self.log(f"{job.name}: готово")
-            self._set_state("подключена")
+            except Exception as e:  # report every failure to the caller
+                self.log(f"{job.name}: error: {e}")
+                self._set_state(CONNECTED)
+                job.done(e, None)
+                continue
+            self.log(f"{job.name}: done")
+            self._set_state(CONNECTED)
             job.done(None, result)
 
     def _run_live(self) -> None:
         assert self._live_factory
         self._live_stop.clear()
         self._live_poke.clear()
-        self._set_state("живой режим: запуск…")
-        streamer = None
+        self._set_state(LIVE_STARTING)
         try:
             render, fallback = self._live_factory()
             with exclusive(wait=2.0):
@@ -205,7 +248,7 @@ class Controller:
                         streamer.start(kb)
                     finally:
                         kb.close()
-                    self._set_state("живой режим")
+                    self._set_state(LIVE)
                     with self._sync_lock:
                         self._live_running = True
                     last_sync = time.monotonic()
@@ -233,12 +276,14 @@ class Controller:
                         self._live_running = False
                         waiters, self._sync_waiters = self._sync_waiters, []
                     for done in waiters:  # handled as a normal job once live mode is gone
-                        self.submit("синхронизация времени", lambda s: s.sync_time(), done)
+                        self.submit("time sync", lambda s: s.sync_time(), done)
                     s.close()
-            self._set_state("подключена")
+            self._set_state(CONNECTED)
+        except ScreenFrozen as e:
+            self._mark_frozen(e)
         except Exception as e:  # keep the controller alive whatever happened
             self._last_live_fail = time.monotonic()
-            self.log(f"живой режим остановлен: {e}")
+            self.log(f"live mode stopped: {e}")
             if not isinstance(e, (DeviceError, OSError)):
                 self.log(traceback.format_exc())
-            self._set_state(f"ошибка живого режима, повтор через {int(LIVE_RETRY_S)} с")
+            self._set_state(f"live mode failed, retrying in {int(LIVE_RETRY_S)} s")

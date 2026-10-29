@@ -21,11 +21,13 @@ def config_dir() -> Path:
 class Settings:
     auto_sync_time: bool = True
     resync_hours: float = 6.0
+    tray_on_close: bool = True  # closing the window keeps the app running in the system tray
+    limit_frames: bool = True  # thin out animations to protocol.MAX_FRAMES
     live: bool = False
     live_config: LiveConfig = field(default_factory=LiveConfig)
 
     @classmethod
-    def load(cls) -> "Settings":
+    def load(cls) -> Settings:
         try:
             raw = json.loads((config_dir() / "settings.json").read_text())
         except (OSError, ValueError):
@@ -59,7 +61,7 @@ def layout_path() -> Path:
 
 
 def load_layout(path: Path | None = None) -> dict:
-    from .widgets import default_layout
+    from .widgets import default_layout  # noqa: PLC0415 (needs Qt; config itself does not)
 
     try:
         data = json.loads((path or layout_path()).read_text())

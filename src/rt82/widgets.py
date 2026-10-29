@@ -13,7 +13,7 @@ from __future__ import annotations
 import copy
 import math
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 from .protocol import HEIGHT, QGIF_HEIGHT, WIDTH
 from .qt import QtCore, QtGui
@@ -28,27 +28,27 @@ class Prop:
     label: str
     kind: str  # text, multiline, color, int, float, bool, font, choice, file
     default: Any
-    options: Optional[dict] = None  # choice: value -> label; int/float: {"min":, "max":}
+    options: dict | None = None  # choice: value -> label; int/float: {"min":, "max":}
 
 
-ALIGN = {"left": "Слева", "center": "По центру", "right": "Справа"}
+ALIGN = {"left": "Left", "center": "Center", "right": "Right"}
 TEXT_PROPS = [
-    Prop("color", "Цвет", "color", "#ffffff"),
-    Prop("font", "Шрифт", "font", "Sans Serif"),
-    Prop("size", "Размер, px", "int", 20, {"min": 6, "max": 130}),
-    Prop("bold", "Жирный", "bool", False),
-    Prop("align", "Выравнивание", "choice", "center", ALIGN),
-    Prop("fit", "Ужимать, если не влезает", "bool", True),
+    Prop("color", "Color", "color", "#ffffff"),
+    Prop("font", "Font", "font", "Sans Serif"),
+    Prop("size", "Size, px", "int", 20, {"min": 6, "max": 130}),
+    Prop("bold", "Bold", "bool", False),
+    Prop("align", "Alignment", "choice", "center", ALIGN),
+    Prop("fit", "Shrink to fit", "bool", True),
 ]
 
 METRICS = {
-    "cpu": "Загрузка CPU, %",
-    "ram": "Память, %",
-    "swap": "Подкачка, %",
-    "temp": "Температура CPU, °C",
-    "disk": "Диск /, %",
-    "net_down": "Сеть: приём",
-    "net_up": "Сеть: передача",
+    "cpu": "CPU load, %",
+    "ram": "Memory, %",
+    "swap": "Swap, %",
+    "temp": "CPU temperature, °C",
+    "disk": "Disk /, %",
+    "net_down": "Network: download",
+    "net_up": "Network: upload",
 }
 
 
@@ -71,7 +71,7 @@ class WidgetType:
 # -- drawing helpers ---------------------------------------------------------
 
 
-def _font(props: dict, size: Optional[float] = None) -> QtGui.QFont:
+def _font(props: dict, size: float | None = None) -> QtGui.QFont:
     f = QtGui.QFont(props.get("font") or "Sans Serif")
     f.setPixelSize(max(1, int(size or props.get("size", 20))))
     f.setBold(bool(props.get("bold")))
@@ -86,7 +86,7 @@ def _align(props: dict) -> Qt.AlignmentFlag:
     return h | Qt.AlignmentFlag.AlignVCenter
 
 
-def draw_text(p: QtGui.QPainter, r: QtCore.QRectF, text: str, props: dict, color: Optional[str] = None) -> None:
+def draw_text(p: QtGui.QPainter, r: QtCore.QRectF, text: str, props: dict, color: str | None = None) -> None:
     size = float(props.get("size", 20))
     font = _font(props, size)
     if props.get("fit", True) and text:
@@ -107,14 +107,14 @@ def _datetime(t: float) -> QtCore.QDateTime:
 
 
 def _human_rate(v: float) -> str:
-    for unit in ("Б/с", "КБ/с", "МБ/с", "ГБ/с"):
-        if v < 1024 or unit == "ГБ/с":
-            return f"{v:.0f} {unit}" if unit == "Б/с" else f"{v:.1f} {unit}"
+    for unit in ("B/s", "KB/s", "MB/s", "GB/s"):
+        if v < 1024 or unit == "GB/s":
+            return f"{v:.0f} {unit}" if unit == "B/s" else f"{v:.1f} {unit}"
         v /= 1024
     return ""
 
 
-def _metric_text(metric: str, v: Optional[float]) -> str:
+def _metric_text(metric: str, v: float | None) -> str:
     if v is None:
         return "—"
     if metric.startswith("net"):
@@ -168,7 +168,7 @@ def paint_image(p, r, props, ctx):
     img = _image(props.get("path", ""))
     if img.isNull():
         if ctx.preview:
-            draw_text(p, r, "нет картинки", {"size": 11, "color": "#888888"})
+            draw_text(p, r, "no image", {"size": 11, "color": "#888888"})
         return
     p.save()
     p.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform)
@@ -255,11 +255,13 @@ def paint_weather(p, r, props, ctx):
         key = ""
     w = ctx.data.get(key) or {}
     if "temp" in w and w["temp"] is not None:
-        text = props.get("format", "{city} {temp:+.0f}°C {text}").format(
-            city=props.get("city", ""), temp=float(w["temp"]), text=w.get("text", ""), wind=w.get("wind") or 0
-        ).strip()
+        text = (
+            props.get("format", "{city} {temp:+.0f}°C {text}")
+            .format(city=props.get("city", ""), temp=float(w["temp"]), text=w.get("text", ""), wind=w.get("wind") or 0)
+            .strip()
+        )
     else:
-        text = "погода…" if "error" not in w else "нет сети"
+        text = "weather…" if "error" not in w else "offline"
     draw_text(p, r, text, props)
 
 
@@ -276,9 +278,11 @@ def paint_progress_day(p, r, props, ctx):
     secs = dt.time().msecsSinceStartOfDay() / 1000
     frac = secs / 86400
     p.fillRect(r, QtGui.QColor(props.get("track", "#333333")))
-    p.fillRect(QtCore.QRectF(r.left(), r.top(), r.width() * frac, r.height()), QtGui.QColor(props.get("accent", "#f59e0b")))
+    p.fillRect(
+        QtCore.QRectF(r.left(), r.top(), r.width() * frac, r.height()), QtGui.QColor(props.get("accent", "#f59e0b"))
+    )
     if props.get("show_text", True):
-        draw_text(p, r, f"{frac * 100:.0f}% дня", props)
+        draw_text(p, r, f"{frac * 100:.0f}% of the day", props)
 
 
 TYPES: dict[str, WidgetType] = {}
@@ -288,19 +292,35 @@ def _register(t: WidgetType) -> None:
     TYPES[t.name] = t
 
 
-_register(WidgetType("clock", "Часы", [Prop("format", "Формат (Qt: HH:mm:ss)", "text", "HH:mm"), *TEXT_PROPS], paint_clock, (200, 60)))
-_register(WidgetType("date", "Дата", [Prop("format", "Формат (Qt: dddd, d MMMM yyyy)", "text", "ddd, d MMMM"), *TEXT_PROPS], paint_date, (200, 24)))
-_register(WidgetType("text", "Текст", [Prop("text", "Текст", "multiline", "Привет!"), *TEXT_PROPS], paint_text, (160, 30)))
+_register(
+    WidgetType(
+        "clock",
+        "Clock",
+        [Prop("format", "Format (Qt: HH:mm:ss)", "text", "HH:mm"), *TEXT_PROPS],
+        paint_clock,
+        (200, 60),
+    )
+)
+_register(
+    WidgetType(
+        "date",
+        "Date",
+        [Prop("format", "Format (Qt: dddd, d MMMM yyyy)", "text", "ddd, d MMMM"), *TEXT_PROPS],
+        paint_date,
+        (200, 24),
+    )
+)
+_register(WidgetType("text", "Text", [Prop("text", "Text", "multiline", "Hello!"), *TEXT_PROPS], paint_text, (160, 30)))
 _register(
     WidgetType(
         "sysmon",
-        "Системный монитор",
+        "System monitor",
         [
-            Prop("metric", "Показатель", "choice", "cpu", METRICS),
-            Prop("style", "Вид", "choice", "text", {"text": "Текст", "bar": "Полоса", "graph": "График"}),
-            Prop("label", "Подпись", "text", "CPU"),
-            Prop("accent", "Цвет полосы/графика", "color", "#38bdf8"),
-            Prop("track", "Фон полосы", "color", "#333333"),
+            Prop("metric", "Metric", "choice", "cpu", METRICS),
+            Prop("style", "Style", "choice", "text", {"text": "Text", "bar": "Bar", "graph": "Graph"}),
+            Prop("label", "Label", "text", "CPU"),
+            Prop("accent", "Bar/graph color", "color", "#38bdf8"),
+            Prop("track", "Bar background", "color", "#333333"),
             *TEXT_PROPS,
         ],
         paint_sysmon,
@@ -310,9 +330,13 @@ _register(
 _register(
     WidgetType(
         "media",
-        "Сейчас играет (MPRIS)",
-        [Prop("idle", "Текст без музыки", "text", "♪ —"), Prop("scroll", "Бегущая строка", "bool", True),
-         Prop("speed", "Скорость, px/с", "int", 20, {"min": 1, "max": 200}), *TEXT_PROPS],
+        "Now playing (MPRIS)",
+        [
+            Prop("idle", "Text when nothing plays", "text", "♪ —"),
+            Prop("scroll", "Scroll long text", "bool", True),
+            Prop("speed", "Speed, px/s", "int", 20, {"min": 1, "max": 200}),
+            *TEXT_PROPS,
+        ],
         paint_media,
         (240, 22),
     )
@@ -320,10 +344,14 @@ _register(
 _register(
     WidgetType(
         "weather",
-        "Погода (Open-Meteo)",
-        [Prop("city", "Подпись", "text", "Москва"), Prop("lat", "Широта", "float", 55.75, {"min": -90, "max": 90}),
-         Prop("lon", "Долгота", "float", 37.62, {"min": -180, "max": 180}),
-         Prop("format", "Формат ({city} {temp} {text} {wind})", "text", "{city} {temp:+.0f}°C {text}"), *TEXT_PROPS],
+        "Weather (Open-Meteo)",
+        [
+            Prop("city", "Label", "text", "Moscow"),
+            Prop("lat", "Latitude", "float", 55.75, {"min": -90, "max": 90}),
+            Prop("lon", "Longitude", "float", 37.62, {"min": -180, "max": 180}),
+            Prop("format", "Format ({city} {temp} {text} {wind})", "text", "{city} {temp:+.0f}°C {text}"),
+            *TEXT_PROPS,
+        ],
         paint_weather,
         (240, 22),
     )
@@ -331,9 +359,14 @@ _register(
 _register(
     WidgetType(
         "command",
-        "Вывод команды",
-        [Prop("command", "Команда оболочки", "text", "uptime -p"), Prop("interval", "Интервал, с", "int", 30, {"min": 1, "max": 86400}),
-         Prop("scroll", "Бегущая строка", "bool", False), Prop("speed", "Скорость, px/с", "int", 20, {"min": 1, "max": 200}), *TEXT_PROPS],
+        "Command output",
+        [
+            Prop("command", "Shell command", "text", "uptime -p"),
+            Prop("interval", "Interval, s", "int", 30, {"min": 1, "max": 86400}),
+            Prop("scroll", "Scroll long text", "bool", False),
+            Prop("speed", "Speed, px/s", "int", 20, {"min": 1, "max": 200}),
+            *TEXT_PROPS,
+        ],
         paint_command,
         (240, 22),
     )
@@ -341,8 +374,8 @@ _register(
 _register(
     WidgetType(
         "image",
-        "Картинка",
-        [Prop("path", "Файл", "file", ""), Prop("mode", "Масштаб", "choice", "contain", FIT_MODES)],
+        "Image",
+        [Prop("path", "File", "file", ""), Prop("mode", "Scaling", "choice", "contain", FIT_MODES)],
         paint_image,
         (60, 60),
     )
@@ -350,9 +383,13 @@ _register(
 _register(
     WidgetType(
         "panel",
-        "Плашка",
-        [Prop("color", "Цвет", "color", "#203040"), Prop("radius", "Скругление", "int", 6, {"min": 0, "max": 60}),
-         Prop("border", "Рамка, px", "int", 0, {"min": 0, "max": 10}), Prop("border_color", "Цвет рамки", "color", "#ffffff")],
+        "Panel",
+        [
+            Prop("color", "Color", "color", "#203040"),
+            Prop("radius", "Corner radius", "int", 6, {"min": 0, "max": 60}),
+            Prop("border", "Border, px", "int", 0, {"min": 0, "max": 10}),
+            Prop("border_color", "Border color", "color", "#ffffff"),
+        ],
         paint_panel,
         (120, 40),
     )
@@ -360,9 +397,13 @@ _register(
 _register(
     WidgetType(
         "dayprogress",
-        "Прогресс дня",
-        [Prop("accent", "Цвет", "color", "#f59e0b"), Prop("track", "Фон", "color", "#333333"),
-         Prop("show_text", "Показывать %", "bool", True), *TEXT_PROPS],
+        "Day progress",
+        [
+            Prop("accent", "Color", "color", "#f59e0b"),
+            Prop("track", "Background", "color", "#333333"),
+            Prop("show_text", "Show percentage", "bool", True),
+            *TEXT_PROPS,
+        ],
         paint_progress_day,
         (240, 12),
     )
@@ -371,7 +412,14 @@ _register(
 
 def new_widget(type_name: str, x: int = 10, y: int = 10) -> dict:
     t = TYPES[type_name]
-    return {"type": type_name, "x": x, "y": y, "w": t.size[0], "h": t.size[1], "props": {p.key: p.default for p in t.props}}
+    return {
+        "type": type_name,
+        "x": x,
+        "y": y,
+        "w": t.size[0],
+        "h": t.size[1],
+        "props": {p.key: p.default for p in t.props},
+    }
 
 
 def props_of(widget: dict) -> dict:
@@ -386,10 +434,31 @@ DEFAULT_LAYOUT = {
     "background_image": "",
     "background_mode": "cover",
     "widgets": [
-        {"type": "clock", "x": 0, "y": 4, "w": 240, "h": 62, "props": {"format": "HH:mm", "size": 60, "bold": True, "color": "#f8fafc"}},
+        {
+            "type": "clock",
+            "x": 0,
+            "y": 4,
+            "w": 240,
+            "h": 62,
+            "props": {"format": "HH:mm", "size": 60, "bold": True, "color": "#f8fafc"},
+        },
         {"type": "date", "x": 0, "y": 64, "w": 240, "h": 22, "props": {"size": 18, "color": "#94a3b8"}},
-        {"type": "sysmon", "x": 6, "y": 92, "w": 112, "h": 18, "props": {"metric": "cpu", "style": "bar", "label": "CPU", "size": 12}},
-        {"type": "sysmon", "x": 122, "y": 92, "w": 112, "h": 18, "props": {"metric": "ram", "style": "bar", "label": "RAM", "size": 12, "accent": "#a78bfa"}},
+        {
+            "type": "sysmon",
+            "x": 6,
+            "y": 92,
+            "w": 112,
+            "h": 18,
+            "props": {"metric": "cpu", "style": "bar", "label": "CPU", "size": 12},
+        },
+        {
+            "type": "sysmon",
+            "x": 122,
+            "y": 92,
+            "w": 112,
+            "h": 18,
+            "props": {"metric": "ram", "style": "bar", "label": "RAM", "size": 12, "accent": "#a78bfa"},
+        },
         {"type": "media", "x": 4, "y": 113, "w": 232, "h": 20, "props": {"size": 13, "color": "#e2e8f0"}},
     ],
 }
@@ -399,7 +468,7 @@ def default_layout() -> dict:
     return copy.deepcopy(DEFAULT_LAYOUT)
 
 
-def render_layout(layout: dict, ctx: Context, selected: Optional[int] = None) -> QtGui.QImage:
+def render_layout(layout: dict, ctx: Context, selected: int | None = None) -> QtGui.QImage:
     img = canvas(layout.get("background", "#000000"))
     p = QtGui.QPainter(img)
     p.setRenderHint(QtGui.QPainter.RenderHint.TextAntialiasing)
@@ -416,7 +485,7 @@ def render_layout(layout: dict, ctx: Context, selected: Optional[int] = None) ->
         try:
             t.paint(p, r, props_of(w), ctx)
         except Exception as e:  # a broken widget must not stop the screen
-            draw_text(p, r, f"ошибка: {e}", {"size": 10, "color": "#ff5555"})
+            draw_text(p, r, f"error: {e}", {"size": 10, "color": "#ff5555"})
         p.restore()
         if ctx.preview and i == selected:
             p.setPen(QtGui.QPen(QtGui.QColor("#ff00ff"), 1, Qt.PenStyle.DashLine))

@@ -2,10 +2,10 @@
 # Makes the RT82 (or any USB keyboard) usable at the disk-encryption password
 # prompt, by putting its drivers into the initramfs and loading them early.
 #
-#   su -c 'boot/rt82-boot-keyboard.sh'           show the plan, ask, apply, rebuild initrd
-#   su -c 'boot/rt82-boot-keyboard.sh --yes'     no questions
-#   su -c 'boot/rt82-boot-keyboard.sh --check'   only report what is in the current initrd
-#   su -c 'boot/rt82-boot-keyboard.sh --undo'    remove the changes and rebuild
+#   su -c 'scripts/boot-keyboard.sh'           show the plan, ask, apply, rebuild the initrd
+#   su -c 'scripts/boot-keyboard.sh --yes'     no questions
+#   su -c 'scripts/boot-keyboard.sh --check'   only report what is in the current initrd
+#   su -c 'scripts/boot-keyboard.sh --undo'    remove the changes and rebuild
 # (or the same with sudo)
 #
 # Works with make-initrd (ALT Linux), dracut (Fedora, openSUSE), initramfs-tools
@@ -26,16 +26,16 @@ for a in "$@"; do
 		--check) MODE=check ;;
 		--undo) MODE=undo ;;
 		-h|--help) sed -n '2,14p' "$0"; exit 0 ;;
-		*) echo "неизвестный параметр: $a" >&2; exit 2 ;;
+		*) echo "unknown option: $a" >&2; exit 2 ;;
 	esac
 done
 
 say() { printf '\033[1m==> %s\033[0m\n' "$*"; }
 warn() { printf '\033[33m!!  %s\033[0m\n' "$*"; }
-ask() { [ "$YES" = 1 ] && return 0; read -r -p "$1 [y/N] " r; [ "$r" = y ] || [ "$r" = Y ] || [ "$r" = д ] || [ "$r" = Д ]; }
+ask() { [ "$YES" = 1 ] && return 0; read -r -p "$1 [y/N] " r; [ "$r" = y ] || [ "$r" = Y ]; }
 
 if [ "$(id -u)" != 0 ]; then
-	echo "Нужны права root: su -c '$0 $*' (или sudo $0 $*)" >&2
+	echo "Root is required: su -c '$0 $*' (or sudo $0 $*)" >&2
 	exit 1
 fi
 
@@ -65,7 +65,7 @@ live_modules() {
 	done | sort -u
 }
 
-command -v modinfo >/dev/null || { echo "нужна утилита modinfo (пакет kmod)" >&2; exit 1; }
+command -v modinfo >/dev/null || { echo "modinfo is required (package kmod)" >&2; exit 1; }
 is_loadable() { modinfo -k "$KERNEL" -F filename "$1" 2>/dev/null | grep -qv '^(builtin)$\|^$'; }
 
 RT82_PRESENT=0
@@ -120,21 +120,21 @@ check_image() {
 	local img listing m missing=""
 	img="$(image_for)"
 	if [ -z "$img" ]; then
-		warn "не нашёл образ initrd для ядра $KERNEL в /boot"
+		warn "no initrd image for kernel $KERNEL in /boot"
 		return
 	fi
 	listing="$(list_image "$img" 2>/dev/null || true)"
 	if [ -z "$listing" ]; then
-		warn "не умею просматривать $img (нет initrd-ls/lsinitrd/lsinitramfs)"
+		warn "cannot list $img (no initrd-ls/lsinitrd/lsinitramfs)"
 		return
 	fi
 	for m in $MODS; do
 		echo "$listing" | grep -Eq "/(${m}|${m//_/-})\.ko" || missing="$missing $m"
 	done
 	if [ -n "$missing" ]; then
-		warn "в $img нет модулей:$missing"
+		warn "$img lacks the modules:$missing"
 	else
-		say "в $img есть все модули клавиатуры: $MODS"
+		say "$img has all keyboard modules: $MODS"
 	fi
 }
 
@@ -144,7 +144,7 @@ strip_block() { # file
 }
 
 rebuild() {
-	say "Пересобираю initrd для $KERNEL"
+	say "Rebuilding the initrd for $KERNEL"
 	case "$GEN" in
 		make-initrd) make-initrd -k "$KERNEL" ;;
 		dracut) dracut -f --kver "$KERNEL" ;;
@@ -162,7 +162,7 @@ apply_config() {
 			strip_block /etc/initrd.mk
 			{
 				echo "$MARK_BEGIN"
-				echo "# Keyboard drivers for the disk password prompt (rt82-boot-keyboard.sh)"
+				echo "# Keyboard drivers for the disk password prompt (epomaker-rt82-plasma scripts/boot-keyboard.sh)"
 				echo "MODULES_TRY_ADD += $MODS"
 				[ -n "$PRELOAD" ] && echo "MODULES_PRELOAD += $PRELOAD"
 				echo "$MARK_END"
@@ -171,7 +171,7 @@ apply_config() {
 		dracut)
 			cat > /etc/dracut.conf.d/90-rt82-keyboard.conf <<-EOF
 				$MARK_BEGIN
-				# Keyboard drivers for the disk password prompt (rt82-boot-keyboard.sh)
+				# Keyboard drivers for the disk password prompt (epomaker-rt82-plasma scripts/boot-keyboard.sh)
 				add_drivers+=" $MODS "
 				force_drivers+=" $PRELOAD "
 				$MARK_END
@@ -182,8 +182,8 @@ apply_config() {
 			{ echo "$MARK_BEGIN"; for m in $MODS; do echo "$m"; done; echo "$MARK_END"; } >> /etc/initramfs-tools/modules
 			;;
 		mkinitcpio)
-			warn "mkinitcpio: добавьте хук keyboard перед encrypt/sd-encrypt в HOOKS в /etc/mkinitcpio.conf"
-			warn "и модули в MODULES=($MODS), затем: mkinitcpio -P"
+			warn "mkinitcpio: add the keyboard hook before encrypt/sd-encrypt to HOOKS in /etc/mkinitcpio.conf"
+			warn "and the modules to MODULES=($MODS), then run: mkinitcpio -P"
 			return 1
 			;;
 	esac
@@ -203,39 +203,37 @@ grub_advice() {
 	local f val efi=0
 	[ -d /sys/firmware/efi ] && efi=1
 	echo
-	say "Загрузчик (меню GRUB и его пароль)"
-	echo "   GRUB работает до Linux: клавиатуру в нём обслуживает прошивка (UEFI/BIOS), а не драйверы initrd."
+	say "Boot loader (GRUB menu and password)"
+	echo "   GRUB runs before Linux: its keyboard is handled by the firmware (UEFI/BIOS), not by initrd drivers."
 	for f in /etc/sysconfig/grub2 /etc/default/grub; do
 		[ -r "$f" ] || continue
 		val="$(sed -n 's/^GRUB_TERMINAL_INPUT=//p' "$f" | tr -d '"'"'")"
 		if [ -n "$val" ]; then
 			echo "   $f: GRUB_TERMINAL_INPUT=$val"
 			if [ "$efi" = 1 ] && echo "$val" | grep -Eq 'usb_keyboard|at_keyboard'; then
-				warn "на UEFI лучше GRUB_TERMINAL_INPUT=\"console\" (ввод через прошивку); после правки: update-grub или grub2-mkconfig -o <путь к grub.cfg>"
+				warn "on UEFI use GRUB_TERMINAL_INPUT=\"console\" (input through the firmware), then run update-grub or grub2-mkconfig -o <path to grub.cfg>"
 			fi
 		fi
 	done
-	echo "   Если в GRUB клавиатура не печатает:"
-	echo "    1. Подключите RT82 кабелем (переключатель режима — в положение проводного/USB режима)"
-	echo "       напрямую в порт материнской платы сзади (лучше USB 2.0), не через хаб или переднюю панель."
-	echo "    2. В настройках UEFI: выключите Fast Boot / «Быстрая загрузка» (она пропускает"
-	echo "       инициализацию USB), включите USB Legacy Support / «USB Keyboard Support» и XHCI Hand-off."
-	echo "    3. Проверьте, печатает ли клавиатура в самом меню UEFI (Del/F2). Если нет — это ограничение"
-	echo "       прошивки ПК с этой клавиатурой (у RT82 внутри USB-хаб); помогает донгл 2.4 ГГц или"
-	echo "       другая клавиатура только для этого шага."
-	echo "   В Fedora /boot обычно не зашифрован и пароль в GRUB не спрашивается, поэтому там"
-	echo "   этот шаг просто не встречается; пароль диска там вводится уже в initrd."
+	echo "   If the keyboard does not type in GRUB:"
+	echo "    1. Connect the RT82 with a cable, directly to a port on the mainboard (USB 2.0 if there is one),"
+	echo "       not through a hub or the front panel."
+	echo "    2. In the UEFI setup, turn off Fast Boot (it skips USB initialisation) and turn on"
+	echo "       USB Legacy Support / USB Keyboard Support and XHCI Hand-off."
+	echo "    3. Check that the keyboard types in the UEFI setup itself (Del/F2). If it does not, the firmware"
+	echo "       cannot handle this keyboard (the RT82 has a USB hub inside); use the 2.4 GHz dongle or"
+	echo "       another keyboard for this step."
 }
 
 # -- main -----------------------------------------------------------------------
 
-echo "Ядро: $KERNEL; генератор initrd: ${GEN:-не найден}; RT82 подключена: $([ $RT82_PRESENT = 1 ] && echo да || echo нет)"
-[ "$RT82_PRESENT" = 1 ] || warn "подключите RT82 кабелем перед запуском, чтобы найти её драйверы точно"
-echo "Модули клавиатуры: ${MODS:-(все встроены в ядро)}"
-echo "Загружать заранее:  ${PRELOAD:-—}"
+echo "Kernel: $KERNEL; initrd generator: ${GEN:-not found}; RT82 connected: $([ $RT82_PRESENT = 1 ] && echo yes || echo no)"
+[ "$RT82_PRESENT" = 1 ] || warn "connect the RT82 with a cable first, so that its exact drivers are found"
+echo "Keyboard modules: ${MODS:-(all built into the kernel)}"
+echo "Load early:       ${PRELOAD:--}"
 
 if [ -z "$GEN" ]; then
-	warn "не найден генератор initrd"
+	warn "no initrd generator found"
 	grub_advice
 	exit 1
 fi
@@ -246,21 +244,21 @@ case "$MODE" in
 		grub_advice
 		;;
 	undo)
-		ask "Убрать изменения и пересобрать initrd?" || exit 0
+		ask "Remove the changes and rebuild the initrd?" || exit 0
 		undo_config
 		rebuild
 		;;
 	apply)
 		check_image
 		if [ -z "$MODS" ]; then
-			say "Все драйверы клавиатуры встроены в ядро — в initrd добавлять нечего."
+			say "All keyboard drivers are built into the kernel: nothing to add to the initrd."
 		else
-			ask "Добавить эти модули в initrd ($GEN) и пересобрать его?" || exit 0
+			ask "Add these modules to the initrd ($GEN) and rebuild it?" || exit 0
 			if apply_config; then
 				rebuild
 				check_image
-				say "Готово. Перезагрузитесь и проверьте ввод пароля диска с RT82."
-				echo "   Отменить: su -c '$0 --undo'"
+				say "Done. Reboot and try typing the disk password on the RT82."
+				echo "   To undo: su -c '$0 --undo'"
 			fi
 		fi
 		grub_advice

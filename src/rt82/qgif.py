@@ -13,7 +13,7 @@ Frames are passed as packed RGB888 bytes (``width*height*3``).
 
 from __future__ import annotations
 
-from typing import Iterable, Optional
+from collections.abc import Iterable
 
 MAGIC = b"QGIF"
 
@@ -104,7 +104,7 @@ class TileEncoder:
             enc = self._cache[tile] = encode_tile(tile)
         return enc
 
-    def record(self, cur: list[bytes], prev: Optional[list[bytes]]) -> bytes:
+    def record(self, cur: list[bytes], prev: list[bytes] | None) -> bytes:
         """One frame record: the tiles that differ from ``prev`` (all if None)."""
         bitmap = bytearray(self.bitmap_len)
         body = bytearray()
@@ -144,7 +144,7 @@ class Stream:
 
     def __init__(self, width: int, height: int):
         self.enc = TileEncoder(width, height)
-        self.prev: Optional[list[bytes]] = None
+        self.prev: list[bytes] | None = None
 
     def header(self, frames: int, fps: int) -> bytes:
         return header(self.enc.width, self.enc.height, frames, fps)

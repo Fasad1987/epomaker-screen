@@ -14,7 +14,7 @@ except ImportError:  # pragma: no cover - depends on the system
     BINDING = "PySide6"
 
 
-def image_bytes(img: "QtGui.QImage") -> bytes:
+def image_bytes(img: QtGui.QImage) -> bytes:
     """Raw bytes of a QImage (both bindings)."""
     ptr = img.constBits()
     if hasattr(ptr, "setsize"):  # PyQt: sip.voidptr

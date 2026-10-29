@@ -19,10 +19,17 @@ def app():
 
 
 SAMPLE = {
-    "sys": {"cpu": 42.0, "ram": 63.0, "temp": 55.0, "net_down": 123456.0, "disk": 70.0,
-            "history": {"cpu": [10, 50, 90, 20], "net_down": [1, 1000, 50]}},
+    "sys": {
+        "cpu": 42.0,
+        "ram": 63.0,
+        "temp": 55.0,
+        "net_down": 123456.0,
+        "disk": 70.0,
+        "history": {"cpu": [10, 50, 90, 20], "net_down": [1, 1000, 50]},
+    },
+    # Non-ASCII on purpose: track titles come in any script.
     "media": {"status": "Playing", "artist": "Кино", "title": "Группа крови"},
-    "weather:55.75,37.62": {"temp": -3.4, "text": "Снег", "code": 71, "wind": 4},
+    "weather:55.75,37.62": {"temp": -3.4, "text": "Snow", "code": 71, "wind": 4},
     "cmd:uptime -p": "up 3 hours",
 }
 
@@ -31,8 +38,11 @@ SAMPLE = {
 def test_every_widget_renders(type_name):
     layout = {"background": "#000000", "widgets": [new_widget(type_name, 0, 0)]}
     if type_name == "sysmon":
-        layout["widgets"] += [dict(new_widget("sysmon", 0, 40), props={"style": s, "metric": m})
-                              for s in ("bar", "graph") for m in ("cpu", "net_down")]
+        layout["widgets"] += [
+            dict(new_widget("sysmon", 0, 40), props={"style": s, "metric": m})
+            for s in ("bar", "graph")
+            for m in ("cpu", "net_down")
+        ]
     for data in ({}, SAMPLE):
         img = render_layout(layout, Context(time.time(), data))
         assert (img.width(), img.height()) == (WIDTH, QGIF_HEIGHT)
