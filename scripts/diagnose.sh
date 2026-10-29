@@ -13,7 +13,7 @@ run() { printf '$ %s\n' "$*"; "$@" 2>&1; }
 
 {
 	section "system"
-	cat /etc/os-release 2>/dev/null | grep -E '^(PRETTY_NAME|VERSION_ID)='
+	grep -sE '^(PRETTY_NAME|VERSION_ID)=' /etc/os-release
 	echo "kernel: $KERNEL"
 	echo "boot: $([ -d /sys/firmware/efi ] && echo UEFI || echo BIOS/legacy)"
 	command -v mokutil >/dev/null && run mokutil --sb-state

@@ -92,7 +92,9 @@ done
 install -Dm644 "$ROOT/src/rt82/resources/rt82-plasma.svg" "$PREFIX/icons/hicolor/scalable/apps/rt82-plasma.svg"
 install -Dm644 "$ROOT/data/applications/rt82-plasma.desktop" "$PREFIX/applications/rt82-plasma.desktop"
 sed -i "s|^Exec=rt82-screen|Exec=$BINDIR/rt82-screen|" "$PREFIX/applications/rt82-plasma.desktop"
-command -v update-desktop-database >/dev/null && update-desktop-database "$PREFIX/applications" 2>/dev/null || true
+if command -v update-desktop-database >/dev/null; then
+	update-desktop-database "$PREFIX/applications" 2>/dev/null || true
+fi
 
 if [ "$SERVICE" = 1 ]; then
 	say "Enabling the rt82-watch service (systemd --user)"
