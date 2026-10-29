@@ -72,17 +72,20 @@ RT82_PRESENT=0
 grep -qsi '^PRODUCT=36b0/30a3' /sys/bus/usb/devices/*/uevent && RT82_PRESENT=1
 
 BASE="usbhid hid_generic hid xhci_pci xhci_hcd ehci_pci ehci_hcd ohci_pci ohci_hcd uhci_hcd xhci_pci_renesas"
+LIVE="$(live_modules | tr '-' '_')"
 MODS=""
-for m in $(live_modules) $BASE; do
+for m in $LIVE $BASE; do
 	m="${m//-/_}"
 	case " $MODS " in *" $m "*) continue ;; esac
 	is_loadable "$m" && MODS="$MODS $m"
 done
 MODS="${MODS# }"
-# Loaded before udev starts: the HID drivers, so the keyboard works even if udev
-# in the initramfs never gets to autoload them.
+# Loaded before udev starts: the HID drivers and the drivers this keyboard is
+# actually attached through (e.g. xhci_pci), so it works even if udev in the
+# initramfs never gets to autoload them. The other host drivers stay on-demand.
 PRELOAD=""
-for m in usbhid hid_generic; do
+for m in usbhid hid_generic $LIVE; do
+	case " $PRELOAD " in *" $m "*) continue ;; esac
 	case " $MODS " in *" $m "*) PRELOAD="$PRELOAD $m" ;; esac
 done
 PRELOAD="${PRELOAD# }"
