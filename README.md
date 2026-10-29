@@ -33,8 +33,8 @@
 Нужны Python 3.9+ и PyQt6 (или PySide6):
 
 ```bash
-# ALT Linux
-sudo apt-get install python3-module-PyQt6
+# ALT Linux (sudo там по умолчанию нет — команды от root выполняются через su -c)
+su -c 'apt-get install python3-module-PyQt6'
 # Fedora
 sudo dnf install python3-pyqt6
 ```
@@ -47,8 +47,22 @@ cd epomaker-rt82-plasma
 scripts/install.sh
 ```
 
-Скрипт ставит программу в `~/.local`, добавляет «Экран RT82» в меню и в автозапуск (в трей) и один раз
-спрашивает sudo — для udev-правила. После установки **переподключите клавиатуру кабелем** и проверьте:
+Скрипт ставит программу в `~/.local`, добавляет «Экран RT82» в меню и в автозапуск (в трей). Права root
+нужны только для udev-правила: скрипт попросит пароль через `sudo`, а если sudo нет или вам он не разрешён
+(как в ALT Linux по умолчанию) — через `su` (пароль root).
+
+Можно и сразу запустить установщик от root — например, в ALT:
+
+```bash
+su -c 'scripts/install.sh'
+```
+
+Тогда udev-правило ставится сразу, а программа — для того пользователя, который вызвал `su` (или `sudo`).
+Если скрипт не сможет его определить, укажите явно: `su -c 'scripts/install.sh --user ИМЯ'`. Пишите `su -c`, а
+не `su -`: со `su -` текущий каталог сменится на `/root`, и путь `scripts/install.sh` не найдётся (тогда
+указывайте полный путь к скрипту). Каталог проекта должен быть доступен этому пользователю на чтение.
+
+После установки **переподключите клавиатуру кабелем** и проверьте:
 
 ```bash
 rt82ctl list
@@ -57,7 +71,7 @@ rt82ctl list
 В выводе должно быть `доступ=да` у интерфейса `usage_page=0xFF60`.
 
 Вместо приложения в трее можно поставить только фоновую синхронизацию времени (служба systemd --user):
-`scripts/install.sh --service`. Удаление: `scripts/uninstall.sh`.
+`scripts/install.sh --service`. Удаление: `scripts/uninstall.sh` (или `su -c 'scripts/uninstall.sh'`).
 
 ## Экран клавиатуры работает только по кабелю
 
@@ -124,13 +138,15 @@ rt82ctl watch                      # фоновая синхронизация �
 (и помечает их как модули для аварийной консоли). Вероятная причина: при сборке образа RT82 была подключена по
 радио или не была подключена, и драйверов её цепочки (`usbhid`, `hid-generic`, контроллер USB) в образе нет или
 они не загружаются вовремя. В Fedora initrd собирает dracut по другим правилам, поэтому там ввод работает.
-Точно это покажет `sudo boot/rt82-boot-keyboard.sh --check`.
+Точно это покажет `su -c 'boot/rt82-boot-keyboard.sh --check'`.
 
-Подключите RT82 кабелем и выполните:
+Подключите RT82 кабелем и выполните от root:
 
 ```bash
-sudo boot/rt82-boot-keyboard.sh
+su -c 'boot/rt82-boot-keyboard.sh'
 ```
+
+(или `sudo boot/rt82-boot-keyboard.sh`, где есть sudo).
 
 Скрипт:
 
@@ -141,7 +157,7 @@ sudo boot/rt82-boot-keyboard.sh
 * `usbhid` и `hid_generic` загружаются в initrd ещё до udev (`MODULES_PRELOAD`);
 * пересобирает initrd для текущего ядра.
 
-Проверить без изменений: `sudo boot/rt82-boot-keyboard.sh --check`. Откатить: `--undo`.
+Проверить без изменений: `su -c 'boot/rt82-boot-keyboard.sh --check'`. Откатить: `--undo`.
 
 ### 2. Меню и пароль GRUB
 
@@ -160,7 +176,7 @@ GRUB работает до Linux. На UEFI клавиатуру в нём об�
 Если не помогло, соберите диагностику и пришлите файл:
 
 ```bash
-sudo boot/diagnose.sh
+su -c 'boot/diagnose.sh'
 ```
 
 ## Epomaker Hub в Chromium («RT82-m2-v36b0-p30a3-…»)

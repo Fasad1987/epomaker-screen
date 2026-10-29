@@ -1,8 +1,9 @@
 #!/bin/bash
 # Collects what is needed to debug the RT82 on this machine into one file.
 #   boot/diagnose.sh              -> rt82-diagnose-<date>.txt in the current directory
-# Run with sudo to include the initrd contents and the GRUB config.
+# Run as root (su -c 'boot/diagnose.sh' or sudo) to include the initrd contents and the GRUB config.
 set -uo pipefail
+PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin"
 
 OUT="${1:-rt82-diagnose-$(date +%Y%m%d-%H%M%S).txt}"
 KERNEL="$(uname -r)"
@@ -76,7 +77,7 @@ run() { printf '$ %s\n' "$*"; "$@" 2>&1; }
 	done
 
 	section "журнал ядра (USB/HID)"
-	dmesg 2>/dev/null | grep -iE '36b0|1919|rt82|epomaker|usbhid|hid-generic' | tail -40 || echo "(dmesg недоступен без sudo)"
+	dmesg 2>/dev/null | grep -iE '36b0|1919|rt82|epomaker|usbhid|hid-generic' | tail -40 || echo "(dmesg недоступен без прав root)"
 } > "$OUT"
 
 echo "Сохранено в $OUT"

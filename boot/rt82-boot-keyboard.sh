@@ -2,15 +2,19 @@
 # Makes the RT82 (or any USB keyboard) usable at the disk-encryption password
 # prompt, by putting its drivers into the initramfs and loading them early.
 #
-#   sudo boot/rt82-boot-keyboard.sh           show the plan, ask, apply, rebuild initrd
-#   sudo boot/rt82-boot-keyboard.sh --yes     no questions
-#   sudo boot/rt82-boot-keyboard.sh --check   only report what is in the current initrd
-#   sudo boot/rt82-boot-keyboard.sh --undo    remove the changes and rebuild
+#   su -c 'boot/rt82-boot-keyboard.sh'           show the plan, ask, apply, rebuild initrd
+#   su -c 'boot/rt82-boot-keyboard.sh --yes'     no questions
+#   su -c 'boot/rt82-boot-keyboard.sh --check'   only report what is in the current initrd
+#   su -c 'boot/rt82-boot-keyboard.sh --undo'    remove the changes and rebuild
+# (or the same with sudo)
 #
 # Works with make-initrd (ALT Linux), dracut (Fedora, openSUSE), initramfs-tools
 # (Debian/Ubuntu) and mkinitcpio (Arch). The GRUB menu/password prompt is not
 # affected by the initramfs: see the advice printed at the end.
 set -euo pipefail
+
+# su -c keeps the user's PATH, which may lack the sbin directories (ALT Linux).
+PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin"
 
 MARK_BEGIN="# >>> rt82-boot-keyboard"
 MARK_END="# <<< rt82-boot-keyboard"
@@ -21,7 +25,7 @@ for a in "$@"; do
 		--yes|-y) YES=1 ;;
 		--check) MODE=check ;;
 		--undo) MODE=undo ;;
-		-h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+		-h|--help) sed -n '2,14p' "$0"; exit 0 ;;
 		*) echo "неизвестный параметр: $a" >&2; exit 2 ;;
 	esac
 done
@@ -31,7 +35,7 @@ warn() { printf '\033[33m!!  %s\033[0m\n' "$*"; }
 ask() { [ "$YES" = 1 ] && return 0; read -r -p "$1 [y/N] " r; [ "$r" = y ] || [ "$r" = Y ] || [ "$r" = д ] || [ "$r" = Д ]; }
 
 if [ "$(id -u)" != 0 ]; then
-	echo "Нужны права root: sudo $0 $*" >&2
+	echo "Нужны права root: su -c '$0 $*' (или sudo $0 $*)" >&2
 	exit 1
 fi
 
@@ -253,7 +257,7 @@ case "$MODE" in
 				rebuild
 				check_image
 				say "Готово. Перезагрузитесь и проверьте ввод пароля диска с RT82."
-				echo "   Отменить: sudo $0 --undo"
+				echo "   Отменить: su -c '$0 --undo'"
 			fi
 		fi
 		grub_advice
