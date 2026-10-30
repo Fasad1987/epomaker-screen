@@ -217,8 +217,16 @@ def cmd_upload(a) -> int:
 
 def _layout(a, geometry) -> dict:
     from .config import load_layout
+    from .widgets import commands_in
 
-    return load_layout(Path(a.file) if a.file else None, geometry)
+    layout = load_layout(Path(a.file) if a.file else None, geometry)
+    # A layout from elsewhere could run anything through its "command" widgets.
+    commands = commands_in(layout) if a.file else []
+    if commands and not a.allow_commands:
+        raise DeviceError(
+            f"{a.file} runs shell commands: {'; '.join(commands)}. Check them, then add --allow-commands."
+        )
+    return layout
 
 
 def cmd_preview(a) -> int:
@@ -438,6 +446,7 @@ def build_parser() -> argparse.ArgumentParser:
     ):
         p = sub.add_parser(name, help=hlp)
         p.add_argument("--file", help="layout file (default: the saved layout for the keyboard's screen size)")
+        p.add_argument("--allow-commands", action="store_true", help="run the shell commands in a --file layout")
         if name == "preview":
             p.add_argument("output", nargs="?", default="epomaker-preview.png")
             p.add_argument("--size", help="screen size WxH (default 240x135)")

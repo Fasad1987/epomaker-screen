@@ -3,7 +3,11 @@
 #   scripts/diagnose.sh   -> epomaker-diagnose-<date>.txt in the current directory
 # Run as root (su -c 'scripts/diagnose.sh' or sudo) to include the initrd contents and the GRUB config.
 set -uo pipefail
-PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin"
+if [ "$(id -u)" = 0 ]; then
+	PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+else
+	PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin"
+fi
 
 OUT="${1:-epomaker-diagnose-$(date +%Y%m%d-%H%M%S).txt}"
 KERNEL="$(uname -r)"
@@ -73,11 +77,12 @@ run() { printf '$ %s\n' "$*"; "$@" 2>&1; }
 		[ -r "$f" ] && { echo "--- $f"; grep -E '^GRUB_(TERMINAL|ENABLE_CRYPTODISK|CMDLINE|PRELOAD)' "$f"; }
 	done
 	for f in /boot/grub/grub.cfg /boot/grub2/grub.cfg /boot/efi/EFI/*/grub.cfg; do
-		[ -r "$f" ] && { echo "--- $f"; grep -E 'terminal_input|insmod (usb|ohci|uhci|ehci|at_keyboard|usb_keyboard|cryptodisk|luks)|password' "$f" | sort | uniq -c; }
+		[ -r "$f" ] && { echo "--- $f"; grep -E 'terminal_input|insmod (usb|ohci|uhci|ehci|at_keyboard|usb_keyboard|cryptodisk|luks)|password' "$f" \
+			| sed -E 's/(password(_pbkdf2)?[[:space:]]+[^[:space:]]+[[:space:]]+).*/\1<hidden>/' | sort | uniq -c; }
 	done
 
 	section "kernel log (USB/HID)"
 	dmesg 2>/dev/null | grep -iE '36b0|3151|1919|epomaker|usbhid|hid-generic' | tail -40 || echo "(dmesg needs root)"
 } > "$OUT"
 
-echo "Saved to $OUT"
+echo "Saved to $OUT (review it before posting: it lists hardware ids and the kernel command line)"

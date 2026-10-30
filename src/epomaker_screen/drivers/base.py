@@ -112,8 +112,14 @@ class Model:
 
 
 def _lock_path() -> str:
-    runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/epomaker-screen-{os.getuid()}"
-    os.makedirs(runtime, mode=0o700, exist_ok=True)
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if not runtime or not os.path.isdir(runtime):
+        # Not /tmp: another user could create the directory there first.
+        runtime = os.path.join(os.path.expanduser("~"), ".cache", "epomaker-screen")
+        os.makedirs(runtime, mode=0o700, exist_ok=True)
+    st = os.lstat(runtime)
+    if st.st_uid != os.getuid() or not os.path.isdir(runtime) or os.path.islink(runtime):
+        raise DeviceError(f"{runtime} is not a directory owned by this user")
     return os.path.join(runtime, "epomaker-screen.lock")
 
 
@@ -124,7 +130,7 @@ def exclusive(wait: float = 10.0) -> Iterator[None]:
     Screen controllers accept one host at a time; two programs talking to one
     at once can freeze it until a power cycle.
     """
-    fd = os.open(_lock_path(), os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+    fd = os.open(_lock_path(), os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
     try:
         end = time.monotonic() + wait
         while True:

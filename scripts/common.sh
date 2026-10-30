@@ -6,12 +6,20 @@
 # or as root (sudo, su -c, su -), in which case the per-user part is run as
 # the user who called su/sudo.
 
-# su -c without "-" keeps the user's PATH, which on ALT Linux lacks the sbin
-# directories (udevadm, modinfo, make-initrd live there).
-case ":$PATH:" in
-	*:/usr/sbin:*) ;;
-	*) PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin" ;;
-esac
+# su -c without "-" keeps the user's PATH. As root, use the system directories
+# only: a user-writable directory in PATH (~/.local/bin, ...) would let anything
+# running as the user put its own "install" or "udevadm" in front of root.
+# As the user, add the sbin directories, which ALT Linux leaves out.
+SAFE_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+USER_PATH="$PATH"
+if [ "$(id -u)" = 0 ]; then
+	PATH="$SAFE_PATH"
+else
+	case ":$PATH:" in
+		*:/usr/sbin:*) ;;
+		*) PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin" ;;
+	esac
+fi
 export PATH
 
 say() { printf '\033[1m==> %s\033[0m\n' "$*"; }
@@ -28,10 +36,9 @@ as_root() {
 		# root's login shell, which may not understand bash quoting.
 		local f rc=0
 		f="$(mktemp)"
-	# shellcheck disable=SC2016 # expanded by the root shell, not here
-		{ echo 'PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin"'; printf '%q ' "$@"; } > "$f"
+		{ echo "PATH=$SAFE_PATH"; printf '%q ' "$@"; } > "$f"
 		echo "   sudo is not available: enter the root password (su):"
-		su -c "bash $f" || rc=$?
+		su -c "/bin/bash $f" || rc=$?
 		rm -f "$f"
 		return "$rc"
 	fi
@@ -62,7 +69,7 @@ run_as_user() {
 	shift
 	uid="$(id -u "$u")"
 	home="$(getent passwd "$u" | cut -d: -f6)"
-	local envs=(HOME="$home" USER="$u" LOGNAME="$u" SHELL=/bin/bash PATH="$PATH")
+	local envs=(HOME="$home" USER="$u" LOGNAME="$u" SHELL=/bin/bash PATH="$USER_PATH:$PATH")
 	if [ -d "/run/user/$uid" ]; then
 		envs+=(XDG_RUNTIME_DIR="/run/user/$uid")
 		[ -S "/run/user/$uid/bus" ] && envs+=(DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus")

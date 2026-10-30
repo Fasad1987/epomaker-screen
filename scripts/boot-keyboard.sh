@@ -13,8 +13,9 @@
 # affected by the initramfs: see the advice printed at the end.
 set -euo pipefail
 
-# su -c keeps the user's PATH, which may lack the sbin directories (ALT Linux).
-PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin"
+# su -c keeps the user's PATH; as root use the system directories only (they
+# include sbin, which ALT Linux leaves out of user PATHs).
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 MARK_BEGIN="# >>> rt82-boot-keyboard"
 MARK_END="# <<< rt82-boot-keyboard"

@@ -21,7 +21,7 @@ from .qt import QtCore, QtGui, QtWidgets, Signal
 from .render import FIT_MODES, RT82, Geometry, load_frames, to_rgb
 from .service import FROZEN, Controller
 from .sources import DataHub, FirmwareSystemInfo
-from .widgets import METRICS, TYPES, Context, Prop, new_widget, props_of, render_layout, renderer
+from .widgets import METRICS, TYPES, Context, Prop, commands_in, new_widget, props_of, render_layout, renderer
 
 Qt = QtCore.Qt
 HANDLE = 6  # resize handle, screen pixels
@@ -768,7 +768,22 @@ class MainWindow(QtWidgets.QMainWindow):
     def open_layout(self) -> None:
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Open layout", str(Path.home()), "Screen layout (*.json)")
         if path:
-            self.layout = load_layout(Path(path), self.geometry)
+            layout = load_layout(Path(path), self.geometry)
+            commands = commands_in(layout)
+            if commands and (
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "Open layout",
+                    "This layout runs shell commands every few seconds:\n\n"
+                    + "\n".join(commands)
+                    + "\n\nOpen it only if you trust these commands.",
+                    QtWidgets.QMessageBox.StandardButton.Open | QtWidgets.QMessageBox.StandardButton.Cancel,
+                    QtWidgets.QMessageBox.StandardButton.Cancel,
+                )
+                != QtWidgets.QMessageBox.StandardButton.Open
+            ):
+                return
+            self.layout = layout
             self._refresh_list()
             self._select(None)
             self.changed()
@@ -811,7 +826,7 @@ class MainWindow(QtWidgets.QMainWindow):
         area.setToolTip("Flash used for the stream. More means fewer erases (less wear).")
         seg = QtWidgets.QSpinBox(minimum=30, maximum=3600, value=int(lc.segment_seconds), suffix=" s")
         seg.setToolTip("How often to start a fresh stream, which resets the screen's playback drift.")
-        from .models import MODELS  # noqa: PLC0415
+        from .models import MODELS
 
         device = QtWidgets.QComboBox()
         device.addItem("The first one connected", "")

@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+- `scripts/diagnose.sh` no longer copies GRUB password lines (including `password_pbkdf2` hashes) into the
+  report people attach to issues.
+- Install, uninstall, boot-keyboard and diagnose scripts run root commands with the system `PATH` only, so a
+  program in a user-writable directory such as `~/.local/bin` cannot stand in for `install` or `udevadm`.
+- Opening a layout file that contains "command" widgets asks first in the app, and `epomakerctl --file` needs
+  `--allow-commands`: such a layout runs its shell commands every few seconds.
+- Without `XDG_RUNTIME_DIR` the lock file goes to `~/.cache/epomaker-screen` instead of `/tmp`, and a symlinked
+  lock file is refused.
+
 ### Changed
 - TFT pixel packets go 1 ms apart instead of the vendor's 2 ms: a 56-frame RT100 Pro animation in 149 s instead
   of 265 s. `--chunk-delay MS` changes it; no delay corrupted pictures in a row and long animations.
