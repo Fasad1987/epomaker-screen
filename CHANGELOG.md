@@ -29,6 +29,9 @@ All notable changes to this project are documented here. The format follows
 - The "send only the changed part" setting is gone from the app: an RT100 Pro draws the part on black instead of
   patching the picture.
 
+- Docs and package metadata describe a desktop app for any desktop, not only KDE Plasma; the README has a
+  "Desktop environments" section with GNOME tray setup.
+
 ### Fixed
 - `boot-keyboard.sh` could report a module as missing from a large initrd although it was there
   (`echo | grep -q` under `pipefail`).

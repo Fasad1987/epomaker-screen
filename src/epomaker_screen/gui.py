@@ -1,4 +1,4 @@
-"""Epomaker Screen: KDE Plasma app for the screens of Epomaker keyboards.
+"""Epomaker Screen: Qt desktop app (editor and tray) for the screens of Epomaker keyboards.
 
 Lives in the system tray, keeps the keyboard clock in sync and lets you
 lay out widgets on the 240x135 screen.

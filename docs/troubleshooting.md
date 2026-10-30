@@ -44,6 +44,11 @@ Open `chrome://device-log`. `FILE_ERROR_ACCESS_DENIED` means the udev rule is mi
 is a Flatpak, also allow device access: `flatpak override --user --device=all org.chromium.Chromium`. Press
 **Pause** in Epomaker Screen first.
 
+## No tray icon, or the window opens at every login (GNOME)
+
+GNOME shows no tray icons without the AppIndicator extension, so the app opens as a window instead. Install the
+extension or use the background service only; see [Desktop environments](../README.md#gnome).
+
 ## Reporting a problem
 
 Attach the output of:

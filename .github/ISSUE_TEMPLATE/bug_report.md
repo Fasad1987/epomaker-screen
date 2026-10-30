@@ -23,5 +23,5 @@ labels: bug
 
 - Keyboard model and connection (cable / 2.4 GHz / Bluetooth):
 - Distribution and version:
-- Desktop (KDE Plasma version, X11/Wayland):
+- Desktop environment and version (KDE Plasma, GNOME, ...; X11/Wayland):
 - epomaker-screen version (`epomakerctl --version`):

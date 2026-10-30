@@ -3,7 +3,7 @@
 [![CI](https://github.com/Fasad1987/epomaker-screen/actions/workflows/ci.yml/badge.svg)](https://github.com/Fasad1987/epomaker-screen/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Use the screens of **Epomaker keyboards** on Linux without a browser: a KDE Plasma tray app and a
+Use the screens of **Epomaker keyboards** on Linux without a browser: a desktop app with a tray icon and a
 command-line tool, with one driver per screen family.
 
 - **Keyboard clock** set automatically on connect, after suspend and every few hours.
@@ -37,7 +37,8 @@ listed, please open an issue with the output of `epomakerctl probe --identify`.
 
 ## Requirements
 
-- Linux with Python 3.9+ and PyQt6 or PySide6
+- Linux with Python 3.9+ and PyQt6 or PySide6. Any desktop works (KDE Plasma, GNOME, XFCE, Cinnamon, MATE,
+  LXQt, Sway, ...; X11 or Wayland); on GNOME see [Desktop environments](#desktop-environments) for the tray icon.
 - The keyboard connected **with a USB cable**: the screens are not reachable over Bluetooth or 2.4 GHz.
 
 ```bash
@@ -83,6 +84,46 @@ keyboard interfaces stay `access=NO` on purpose: the rule does not let programs 
 
 Options: `--service` installs only a headless clock-sync service (systemd `--user`) instead of the tray app;
 `--no-udev` skips the rule. To remove everything: `scripts/uninstall.sh`.
+
+## Desktop environments
+
+The app is plain Qt and runs on any desktop; `epomakerctl` needs none at all. Autostart uses the XDG
+`~/.config/autostart` entry, and keyboard access comes from udev and systemd-logind, so neither depends on the
+desktop. What differs is the **tray icon**:
+
+| Desktop                                 | Tray icon                                                  |
+| --------------------------------------- | ---------------------------------------------------------- |
+| KDE Plasma, XFCE, Cinnamon, MATE, LXQt  | works                                                      |
+| GNOME on Ubuntu (and others that ship it) | works: the AppIndicator extension is preinstalled       |
+| GNOME on Fedora, ALT, Arch, Debian ...  | needs the AppIndicator extension (below)                    |
+| Sway, i3, Hyprland                      | works if the bar shows a tray (waybar, i3bar, ...)          |
+
+Without a tray the app still works: at login it opens as a normal window instead of hiding, and closing the
+window quits it (the "stay in the tray" setting has no effect).
+
+### GNOME
+
+Either add a tray with the AppIndicator extension:
+
+```bash
+# Fedora
+sudo dnf install gnome-shell-extension-appindicator
+# Debian/Ubuntu
+sudo apt install gnome-shell-extension-appindicator
+# ALT Linux
+su -c 'apt-get install gnome-shell-extension-appindicator'
+```
+
+then log out and back in, and turn on **AppIndicator and KStatusNotifierItem Support** in the Extensions app (or
+`gnome-extensions enable appindicatorsupport@rgcjonas.gmail.com`). The package name may differ on your
+distribution; the extension is also on extensions.gnome.org.
+
+Or skip the tray app and keep only the background service, which sets the keyboard clock and feeds the TFT
+system page with no window; use `epomakerctl` and the menu entry when you need the editor:
+
+```bash
+scripts/install.sh --service
+```
 
 ## Usage
 
@@ -171,7 +212,7 @@ src/epomaker_screen/
   service.py        background worker: hotplug, clock sync, live mode, system page, jobs
   widgets.py        widgets and layout rendering (QPainter), any screen size
   sources.py        widget data: /proc, hwmon, MPRIS, Open-Meteo, commands
-  gui.py            KDE Plasma app: editor and tray
+  gui.py            desktop app (Qt): editor and tray
   cli.py, lab.py    epomakerctl and its protocol experiments
 data/               udev rule, desktop entries, systemd unit
 scripts/            install/uninstall, boot keyboard fix, diagnostics
