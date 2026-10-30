@@ -189,7 +189,7 @@ def paint_sysmon(p, r, props, ctx):
         return
     p.save()
     if style == "bar":
-        frac = 0.0 if v is None else max(0.0, min(1.0, v / (100.0 if metric != "temp" else 100.0)))
+        frac = 0.0 if v is None else max(0.0, min(1.0, v / 100.0))
         if metric.startswith("net"):
             frac = 0.0 if v is None else min(1.0, math.log10(1 + v) / 8)
         p.fillRect(r, QtGui.QColor(props.get("track", "#333333")))
@@ -474,6 +474,12 @@ def default_layout(geometry: Geometry = RT82) -> dict:
         if "size" in w.get("props", {}):
             w["props"]["size"] = max(6, round(w["props"]["size"] * font))
     return layout
+
+
+def commands_in(layout: dict) -> list[str]:
+    """Shell commands a layout would run (its "command" widgets)."""
+    widgets = layout.get("widgets", [])
+    return [c for w in widgets if w.get("type") == "command" and (c := w.get("props", {}).get("command"))]
 
 
 def render_layout(layout: dict, ctx: Context, selected: int | None = None, geometry: Geometry = RT82) -> QtGui.QImage:

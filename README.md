@@ -10,7 +10,8 @@ command-line tool, with one driver per screen family.
 - **Pictures and GIFs** on the keyboard screen, without Epomaker Hub or the vendor app.
 - **Widgets** laid out with the mouse for the connected keyboard's screen size: clock, date,
   CPU/RAM/temperature/network (text, bar or graph), now playing (MPRIS), weather (Open-Meteo, no API key), output
-  of any command, images, panels and day progress. **Live mode** keeps them up to date.
+  of any command (a layout from someone else can run commands too: the app asks before opening one), images,
+  panels and day progress. **Live mode** keeps them up to date.
 - **The keyboard's own system page** (TFT keyboards such as the RT100 Pro) fed with CPU, RAM and disk values.
 - **Typing the disk password** on a USB keyboard at boot: a script that puts the keyboard drivers into the
   initramfs (make-initrd on ALT Linux, dracut, initramfs-tools, mkinitcpio), plus advice for the GRUB prompt.
