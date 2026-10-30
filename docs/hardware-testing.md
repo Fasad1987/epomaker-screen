@@ -44,8 +44,9 @@ Also check, and report:
 ### Results so far
 
 RT100 Pro, firmware 0x0109: identify, clock, system page and `lab pattern` work; `lab speed` gave complete
-pictures down to no delay (0.77 s per picture, now the default). The third picture of `lab banks` was refused
-and `lab partial` changed nothing; both experiments now log more detail.
+pictures down to no delay (0.77 s per picture, now the default). `lab animation` plays and survives unplugging,
+with a visible wipe on each frame. A partial box is drawn on black, replacing the picture. `lab banks` had a
+picture refused (bank 3 in one run, bank 5 in another) with the vendor's 2 s wait; the driver now waits longer.
 
 ## RT82 family
 

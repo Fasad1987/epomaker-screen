@@ -9,7 +9,8 @@ macOS software (version 3.2.22) by [ramarivera/epomaker-driver-linux](https://gi
 vectors in that project's tests.
 
 **Status:** checked on an **RT100 Pro, firmware 0x0109**: identification, the clock, the system page, the pixel
-format (`lab pattern`) and pixel packets with no delay (`lab speed`) work. The rest is still open (below);
+format (`lab pattern`), pixel packets with no delay (`lab speed`) and animations (`lab animation`) work, and an
+animation is still there after unplugging the cable. The rest is still open (below);
 `epomakerctl lab` runs the experiments that settle it (see [hardware testing](../hardware-testing.md)).
 
 ## Devices
@@ -93,9 +94,11 @@ pictures complete:
 - Why did the third still in a row get refused (`lab banks`, now with timings and `--pause`)? Likely the keyboard
   is still writing the previous picture to flash.
 - Does the keyboard switch to a bank when a picture is written to it, or only store it? (`lab banks`)
-- A prepare with a quarter-size box was accepted, but the picture did not change (RT100 Pro 0x0109). `lab partial`
-  now also tries a full-height strip (one contiguous run of column-major bytes) and asks to switch pages, to tell
-  "ignored" from "drawn only on redraw".
+- A prepare with a smaller box **replaces** the picture: an RT100 Pro (0x0109) showed the box on black (one earlier
+  run showed no change, probably on another screen page). So boxes cannot patch a picture, only make smaller ones.
+  `lab partial` also tries a full-height strip and a page switch, to see where boxes land.
+- Animations redraw visibly, like a wipe across the screen, on an RT100 Pro: the firmware seems to copy each frame
+  from flash to the panel slower than one refresh. Full-screen colour changes show it most.
 - Are stills and the animation stored separately, and do they survive unplugging?
 - Where are pictures stored (flash wear for frequent live updates)?
 
@@ -103,8 +106,8 @@ pictures complete:
 
 The firmware cannot be streamed to like the RT82's controller, and each update rewrites a picture bank. Live
 mode therefore redraws the layout every `interval_s` (60 s by default, aligned to the minute) and only sends a
-picture when it changed (under a second on an RT100 Pro). With `partial` on it sends only the changed rectangle;
-this had no effect on an RT100 Pro with firmware 0x0109.
+picture when it changed (under a second on an RT100 Pro). It always sends the whole picture: a smaller box
+replaces the picture rather than patching it.
 
 The firmware draws a clock and a system page itself: Epomaker Screen sets the clock on connect and after suspend and
 sends system values every 2 s, which costs nothing in flash.

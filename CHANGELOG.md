@@ -13,6 +13,8 @@ All notable changes to this project are documented here. The format follows
   attempts and the last reply.
 - `lab banks` logs timings, carries on past a refused bank and takes `--pause`; `lab partial` also tries a
   full-height strip and a page switch.
+- The "send only the changed part" setting is gone from the app: an RT100 Pro draws the part on black instead of
+  patching the picture.
 
 ### Fixed
 - `boot-keyboard.sh` could report a module as missing from a large initrd although it was there

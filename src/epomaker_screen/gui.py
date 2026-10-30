@@ -834,17 +834,10 @@ class MainWindow(QtWidgets.QMainWindow):
             "RT100 Pro and other TFT keyboards: how often live mode redraws the picture. "
             "Each change rewrites a picture bank in the keyboard's flash."
         )
-        partial = QtWidgets.QCheckBox("Send only the changed part of the picture (experimental)")
-        partial.setChecked(rc.partial)
-        partial.setToolTip(
-            "Faster, if the keyboard's firmware supports it (an RT100 Pro with firmware 0x0109 ignores it); "
-            "check with `epomakerctl lab partial`."
-        )
         sysinfo = QtWidgets.QCheckBox("Keep the keyboard's own system page up to date (CPU, RAM, disk)")
         sysinfo.setChecked(self.settings.system_info)
         f.addRow(QtWidgets.QLabel("<b>RT100 Pro and other TFT keyboards</b>"))
         f.addRow("Redraw live widgets every", interval)
-        f.addRow(partial)
         f.addRow(sysinfo)
         bb = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel
@@ -867,9 +860,7 @@ class MainWindow(QtWidgets.QMainWindow):
             lead_frames=lc.lead_frames,
             slowdown=lc.slowdown,
         )
-        self.settings.refresh_config = RefreshConfig(
-            interval_s=interval.value(), partial=partial.isChecked(), bank=rc.bank
-        )
+        self.settings.refresh_config = RefreshConfig(interval_s=interval.value(), bank=rc.bank)
         self.settings.system_info = sysinfo.isChecked()
         self.ctl.set_system_info(FirmwareSystemInfo() if self.settings.system_info else None)
         self.settings.save()

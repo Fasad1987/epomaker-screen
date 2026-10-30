@@ -66,7 +66,9 @@ class RefreshConfig:
     """Live mode for TFT keyboards: each update rewrites a picture bank."""
 
     interval_s: float = 60.0  # how often to re-render and send changes
-    partial: bool = False  # send only the changed rectangle (no effect on an RT100 Pro, firmware 0x0109)
+    # Send only the changed rectangle. An RT100 Pro (firmware 0x0109) draws the box on black,
+    # dropping the rest of the picture, so this stays off.
+    partial: bool = False
     bank: int = 0
 
 
