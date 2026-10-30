@@ -140,8 +140,7 @@ the five pictures. There is no known command to switch pages from the host.
 
 Once an animation is stored, the keyboard goes back to it by itself some time after you switch to another page,
 so the clock page shows only until then. Still open: is that the firmware's own idle timer, or does a host
-command (system info `22` every 2 s from the app, or clock `28`) make it redraw? Without an animation (after
-`reset-screen`) the clock page stays.
+command (system info `22` every 2 s from the app, or clock `28`) make it redraw?
 
 ## Live widgets on TFT keyboards
 
