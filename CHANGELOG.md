@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- TFT live mode keeps its next redraw time across the short slices the service runs it in, and holds back
+  system page packets for 5 s after a picture, while the keyboard is still writing it.
+- Turning on live mode with a TFT keyboard explains once why the picture changes only every few minutes and that
+  the keyboard's system page is the real-time view; the keyboard card says the same.
+
 ### Added
 - The app has a new layout: widget list, preview and properties side by side, a card with the connected keyboard
   and its state, the log as a panel that can be hidden, and icons that fall back to Qt's own where the desktop's

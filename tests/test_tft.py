@@ -1,5 +1,6 @@
 import datetime as dt
 import threading
+import time
 
 import pytest
 
@@ -171,6 +172,38 @@ def test_refresh_live_mode_only_sends_changes():
     stop = threading.Event()
     stop.set()
     live.run_for(stop, 1)  # returns at once
+
+
+def test_refresh_redraws_on_time_when_called_in_short_slices():
+    # The service calls run_for in 2 s slices to feed the system page in between;
+    # redraws must still come every interval, not only when a slice happens to cover one.
+    fake = FakeTft()
+    s = session(fake)
+    content = {"v": 0}
+
+    def render(t):
+        content["v"] += 1
+        return frame(lambda x, y: (content["v"] % 256, 0, 0) if x < 4 and y < 4 else (0, 0, 0), 8, 8)
+
+    s.caps = s.caps.__class__(**{**s.caps.__dict__, "width": 8, "height": 8})
+    live = s.live(render, b"", RefreshConfig(interval_s=0.2))
+    live.start()
+    stop = threading.Event()
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < 1.05:
+        live.run_for(stop, 0.03)
+    assert 5 <= live.stats["updates"] <= 7
+
+
+def test_system_info_waits_while_a_picture_is_stored():
+    fake = FakeTft()
+    s = session(fake)
+    s.upload_still(frame(lambda x, y: (0, 0, 0)))
+    s.system_info(SystemInfo(cpu_percent=55))
+    assert fake.system_info is None
+    s.busy_until = 0.0
+    s.system_info(SystemInfo(cpu_percent=55))
+    assert fake.system_info[4] == 55
 
 
 def test_clock_and_system_info_reach_the_keyboard():

@@ -442,6 +442,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._last_state = ""
         self._state = NO_KEYBOARD
         self._told_about_tray = False
+        self._told_about_tft_live = False
         self.zoom = self.settings.zoom  # 0: fit the window
         self.show_grid = self.settings.show_grid
         self.snap = self.settings.snap
@@ -946,10 +947,25 @@ class MainWindow(QtWidgets.QMainWindow):
             {"rdm": self.settings.live_config, "tft": self.settings.refresh_config},
         )
         if on and self.driver is not None and self.driver.family == "tft":
+            minutes = self.settings.refresh_config.interval_s / 60
             self._append_log(
-                f"live mode on: the picture is redrawn every {self.settings.refresh_config.interval_s:g} s "
-                "when it changed. Each update rewrites a picture bank in the keyboard's flash."
+                f"live mode on: the picture in bank {self.settings.refresh_config.bank + 1} is redrawn every "
+                f"{minutes:g} min when it changed; the keyboard's system page gets CPU/RAM/disk every 2 s"
             )
+            if not self._told_about_tft_live:
+                self._told_about_tft_live = True
+                QtWidgets.QMessageBox.information(
+                    self,
+                    "Live mode on this keyboard",
+                    f"<p>The {self.driver.name} stores pictures in flash memory, so the app can only redraw the "
+                    f"picture now and then: every {minutes:g} minutes (Settings). Faster would wear the flash out "
+                    "within months, and each redraw takes a few seconds.</p>"
+                    "<p><b>For values that change in real time, use the keyboard's own pages:</b> the clock, and the "
+                    "system page with CPU, temperature, RAM and disk, which the app updates every 2 seconds. "
+                    "The keyboard draws them itself, without touching the flash.</p>"
+                    "<p>The picture appears on the picture page; with an animation stored, the keyboard "
+                    "switches back to the animation after a while.</p>",
+                )
         elif on:
             self._append_log("live mode on (the screen is erased once at start, which takes a few seconds)")
 
@@ -1157,7 +1173,12 @@ class MainWindow(QtWidgets.QMainWindow):
             facts.append(f"{caps.slots} picture{'s' if caps.slots > 1 else ''}")
             if caps.max_frames > 1:
                 facts.append(f"animations up to {caps.max_frames} frames")
-            facts.append("live widgets" if caps.live == "stream" else "redrawn widgets")
+            if caps.live == "stream":
+                facts.append("live widgets")
+            else:
+                facts.append(f"widgets redrawn every {self.settings.refresh_config.interval_s / 60:g} min")
+                if caps.system_info:
+                    facts.append("real-time CPU/RAM on its system page")
             if not caps.verified:
                 facts.append("<i>not yet verified on this model</i>")
         self.card.setText(f"{dot} <b>{d.name}</b> — {self._state}<br><small>{' · '.join(facts)}</small>")

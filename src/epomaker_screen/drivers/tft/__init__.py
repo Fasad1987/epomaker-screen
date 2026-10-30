@@ -88,6 +88,7 @@ class _Refresh:
         self.s, self.render, self.cfg, self.log = session, render, config, log
         self.last: bytes | None = None
         self.stats = {"updates": 0, "bytes": 0, "skipped": 0}
+        self.next_due = 0.0  # wall-clock time of the next redraw
 
     def _update(self) -> None:
         frame = self.render(time.time())
@@ -102,18 +103,31 @@ class _Refresh:
         self.stats["updates"] += 1
         self.stats["bytes"] += sent
 
+    def _schedule(self) -> None:
+        # Align updates to the interval, e.g. on the minute for a clock.
+        now = time.time()
+        self.next_due = now - now % self.cfg.interval_s + self.cfg.interval_s
+
     def start(self) -> None:
         self._update()
+        self._schedule()
 
     def run_for(self, stop: threading.Event, seconds: float = math.inf) -> None:
+        """Waits up to ``seconds`` and redraws whenever a redraw falls due.
+
+        The caller calls this in short slices (it feeds the system page in between),
+        so the due time is kept across calls instead of being worked out per slice.
+        """
         end = time.monotonic() + seconds
-        while not stop.is_set() and time.monotonic() < end:
-            # Align updates to the interval, e.g. on the minute for a clock.
-            wait = self.cfg.interval_s - (time.time() % self.cfg.interval_s)
-            if stop.wait(min(wait, max(0.0, end - time.monotonic()))):
+        while not stop.is_set():
+            left = end - time.monotonic()
+            if left <= 0:
                 return
-            if time.monotonic() < end:
+            if stop.wait(max(0.0, min(left, self.next_due - time.time()))):
+                return
+            if time.time() >= self.next_due:
                 self._update()
+                self._schedule()
 
     def stop(self) -> None:
         pass  # the last picture stays in its bank
@@ -127,6 +141,7 @@ class TftSession:
         self.sleep = sleep
         self.chunk_delay = CHUNK_DELAY
         self.last_prepare: dict = {}
+        self.busy_until = 0.0  # monotonic time until which the keyboard is likely still writing flash
         self.caps = capabilities(model)
         self._lock = threading.RLock()
 
@@ -164,6 +179,8 @@ class TftSession:
         self.sleep(0.1)
 
     def system_info(self, info: SystemInfo) -> None:
+        if time.monotonic() < self.busy_until:
+            return  # still storing a picture; the next update comes in two seconds
         self.send(
             codec.system_info(
                 info.disk_free, info.disk_total, info.memory_used, info.memory_total,
@@ -207,6 +224,8 @@ class TftSession:
                 self.send(p, self.chunk_delay)
                 if i % 64 == 0 or i + 1 == total:
                     progress(i + 1, total)
+            # After a picture the keyboard refuses the next upload for 1-5 s (lab banks).
+            self.busy_until = time.monotonic() + 5.0
 
     def _pixels(self, frame: bytes, box=None) -> bytes:
         w, h = self.caps.width, self.caps.height
