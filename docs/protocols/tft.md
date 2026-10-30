@@ -74,7 +74,7 @@ last reply.
 
 **Pixels** (`25`), 56 bytes per packet: `[1]` bank or frame index, `[2]` frames, `[3]` delay, `[4:6]` packet index
 (u16 LE, restarting at 0 for each animation frame), `[6]` bytes in this packet. The vendor desktop app waits
-2 ms between packets; the driver sends them back to back (each is an acknowledged USB control transfer).
+2 ms between packets, and so does the driver (`--chunk-delay` changes it).
 
 Pixels are RGB565 **big-endian**, ordered **column by column** (x outer, y inner): for a 2×2 image red, green /
 blue, white the bytes are `F8 00 00 1F 07 E0 FF FF`.
@@ -89,10 +89,18 @@ pictures complete:
 | 1 ms                  | 2.84 s       | 40 KiB/s   |
 | none                  | 0.77 s       | 146 KiB/s  |
 
+One picture after a pause survives any of these, but the keyboard acknowledges packets it has no time to store:
+with no delay, five pictures in a row and a 56-frame animation (6.3 MB in 33 s) came out corrupted. A half-written
+picture shows white where its flash was erased and not written. The keyboard draws its own progress bar during an
+upload, which fell behind the host. `lab flow` reads replies during a transfer, looking for a progress or busy
+signal to pace uploads by; until one is found the driver keeps the vendor's 2 ms.
+
+After a picture the keyboard refuses the next prepare for 1–5 s (reply `a5 00 ...`), probably while it finishes
+writing flash. The driver waits up to about 10 s.
+
 ### Open questions (to settle on hardware)
 
-- Why did the third still in a row get refused (`lab banks`, now with timings and `--pause`)? Likely the keyboard
-  is still writing the previous picture to flash.
+- Is there a way to see when the keyboard has stored a packet (`lab flow`)? That would allow safe, faster uploads.
 - Does the keyboard switch to a bank when a picture is written to it, or only store it? (`lab banks`)
 - A prepare with a smaller box **replaces** the picture: an RT100 Pro (0x0109) showed the box on black (one earlier
   run showed no change, probably on another screen page). So boxes cannot patch a picture, only make smaller ones.

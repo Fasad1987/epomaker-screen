@@ -61,6 +61,8 @@ def _session(a) -> Iterator:
     driver = _driver(a)
     with exclusive():
         s = driver.open(log=log)
+        if getattr(a, "chunk_delay", None) is not None and hasattr(s, "chunk_delay"):
+            s.chunk_delay = a.chunk_delay / 1000
         try:
             yield driver, s
         except DeviceError:
@@ -349,6 +351,12 @@ def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="epomakerctl", description="Control Epomaker keyboard screens without a browser.")
     ap.add_argument("--version", action="version", version=__version__)
     ap.add_argument("--device", help="model key (rt82, rt100pro, ...) or USB id (3151:5002) when several are connected")
+    ap.add_argument(
+        "--chunk-delay",
+        type=float,
+        metavar="MS",
+        help="TFT keyboards: milliseconds between pixel packets (default 2, the vendor's; lower can corrupt pictures)",
+    )
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("list", help="Epomaker keyboards, their interfaces and access rights").set_defaults(fn=cmd_list)
     p = sub.add_parser("probe", help="detailed read-only report for bug reports")
@@ -360,7 +368,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("sync-time", help="set the keyboard clock").set_defaults(fn=cmd_sync)
     up = sub.add_parser("upload", help="upload pictures and animations (PNG, JPEG, GIF, WebP)")
     up.add_argument("files", nargs="+")
-    up.add_argument("--fit", choices=["contain", "cover", "stretch"], default="contain")
+    up.add_argument("--fit", choices=["contain", "cover", "stretch"], nargs="?", const="contain", default="contain")
     up.add_argument("--fps", type=int, help="override the frame rate")
     up.add_argument("--bank", type=int, help="TFT keyboards: write one still into bank 1..5 and keep the others")
     up.add_argument(

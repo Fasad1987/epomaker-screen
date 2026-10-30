@@ -15,8 +15,9 @@ import sys
 import time
 
 from .drivers.base import DeviceError
+from .drivers.tft import codec
 
-EXPERIMENTS = ("pattern", "speed", "partial", "animation", "banks")
+EXPERIMENTS = ("pattern", "speed", "partial", "animation", "banks", "flow")
 
 
 def add_parser(sub) -> argparse.ArgumentParser:
@@ -25,6 +26,7 @@ def add_parser(sub) -> argparse.ArgumentParser:
     p.add_argument("--bank", type=int, default=1, help="bank 1..5 to draw into (default 1)")
     p.add_argument("--delays", default="5,2,1,0", help="speed: milliseconds between pixel packets to try")
     p.add_argument("--pause", type=float, default=0.0, help="banks: seconds to wait between pictures")
+    p.add_argument("--every", type=int, default=32, help="flow: read the keyboard's reply every N packets")
     return p
 
 
@@ -178,4 +180,40 @@ def main(a, session, log) -> int:
             answer = _ask("What did you observe?")
             if answer:
                 log(f"reported: {answer}")
+        elif a.experiment == "flow":
+            flow(s, w, h, bank, a, log)
     return 0
+
+
+def flow(s, w, h, bank: int, a, log) -> None:
+    """Streams one picture with no delay and reads the reply every few packets.
+
+    The keyboard acknowledges every packet even when it falls behind, so this looks
+    for a reply that shows its progress or a busy state, to pace uploads by it.
+    """
+    data = s._pixels(pattern(w, h, 3), None)
+    packets = codec.chunks(data, bank, 1, 0)
+    every = max(1, a.every)
+    with s._lock:
+        s._prepare(codec.prepare(len(data), (0, 0, w, h), bank, 1, 0))
+        s.sleep(0.1)
+        t0, last = time.monotonic(), None
+        for i, p in enumerate(packets):
+            s.send(p, 0.0)
+            if i % every == 0 or i + 1 == len(packets):
+                reply = s.t.get_feature(0, codec.REPORT)[:8].hex(" ")
+                if reply != last:
+                    log(f"packet {i + 1}/{len(packets)} at {time.monotonic() - t0:.2f} s: reply {reply}")
+                    last = reply
+        sent = time.monotonic() - t0
+        log(f"all {len(packets)} packets sent in {sent:.2f} s; now polling for 5 s")
+        for _ in range(20):
+            s.sleep(0.25)
+            reply = s.t.get_feature(0, codec.REPORT)[:8].hex(" ")
+            if reply != last:
+                log(f"after {time.monotonic() - t0:.2f} s: reply {reply}")
+                last = reply
+    log("Expect the test pattern with three orange dots on the left.")
+    answer = _ask("Is the picture complete and correct (y/n), and did the keyboard's progress bar keep up?")
+    if answer:
+        log(f"reported: {answer}")

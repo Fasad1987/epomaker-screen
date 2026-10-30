@@ -7,8 +7,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
-- TFT keyboards: pixel packets go without the vendor's 2 ms gaps, 6.6 times faster (a full RT100 Pro picture in
-  0.77 s, checked on firmware 0x0109).
+- `--chunk-delay MS` sets the pause between TFT pixel packets (default 2 ms, the vendor's). No delay is 6.6 times
+  faster but corrupted pictures in a row and long animations on an RT100 Pro.
+- `upload --fit` works without a value (`contain`).
+- `lab flow` reads the keyboard's replies during a transfer.
 - TFT keyboards: a busy keyboard gets about 10 s to accept an upload instead of 2 s, and the error names the
   attempts and the last reply.
 - `lab banks` logs timings, carries on past a refused bank and takes `--pause`; `lab partial` also tries a

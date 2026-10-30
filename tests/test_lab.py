@@ -18,7 +18,9 @@ def run(experiment: str, **kw):
     def session(a):
         yield driver, s
 
-    args = SimpleNamespace(experiment=experiment, bank=kw.get("bank", 1), delays=kw.get("delays", "2,0"), pause=0.0)
+    args = SimpleNamespace(
+        experiment=experiment, bank=kw.get("bank", 1), delays=kw.get("delays", "2,0"), pause=0.0, every=32
+    )
     logs = []
     assert lab.main(args, session, logs.append) == 0
     return fake, logs
@@ -32,7 +34,7 @@ def test_pattern_draws_bars_and_marker():
     assert any("bars" in m for m in logs)
 
 
-@pytest.mark.parametrize("experiment", ["speed", "partial", "animation", "banks"])
+@pytest.mark.parametrize("experiment", ["speed", "partial", "animation", "banks", "flow"])
 def test_experiments_run(experiment):
     fake, logs = run(experiment)
     assert logs

@@ -33,10 +33,11 @@ COMMAND_PAGE, COMMAND_USAGE = 0xFFFF, 0x0002  # vendor command collection (featu
 # Vendor timings (desktop app): 10 ms before a command, 10 ms before reading its
 # reply, 100 ms before reading a prepare reply.
 SEND_DELAY, READ_DELAY, PREPARE_READ_DELAY = 0.01, 0.01, 0.1
-# The vendor app waits 2 ms between pixel packets. Each feature report is a USB
-# control transfer the keyboard acknowledges, and an RT100 Pro (firmware 0x0109)
-# took full pictures with no extra delay, 6.6 times faster (lab speed).
-CHUNK_DELAY = 0.0
+# The vendor app waits 2 ms between pixel packets. An RT100 Pro (firmware 0x0109)
+# takes one picture with no delay, but acknowledges packets it cannot keep up with
+# (it writes them to flash): back-to-back pictures and a 56-frame animation came out
+# corrupted. So keep the vendor pace unless a lab experiment shows a safe faster one.
+CHUNK_DELAY = 0.002
 # The vendor app gives up on a prepare after ten retries (about 2 s). An RT100 Pro
 # refused that long right after two full pictures in a row, so keep asking longer.
 PREPARE_RETRY_DELAY = 0.1
