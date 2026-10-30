@@ -25,7 +25,9 @@ EPOMAKER_RDM_VID = 0x36B0
 EPOMAKER_TFT_VID = 0x3151
 
 
-def _tft(key, name, pid, internal_id, w, h, *, rgb=16, memory_mib=6, banks=5, verified=False, notes=""):
+def _tft(
+    key, name, pid, internal_id, w, h, *, rgb=16, memory_mib=6, banks=5, verified=False, erase_verified=False, notes=""
+):
     pixel_bytes = 3 if rgb == 24 else 2
     # The vendor's drawing board rounds each frame up to whole 4 KiB blocks (even
     # when already aligned), keeps a 4 KiB header and reserves the still banks.
@@ -33,7 +35,10 @@ def _tft(key, name, pid, internal_id, w, h, *, rgb=16, memory_mib=6, banks=5, ve
     max_frames = min(255, (memory_mib * 1024 * 1024 - 4096) // block - banks)
     return Model(
         key, name, "tft", EPOMAKER_TFT_VID, pid, w, h, internal_id, verified, notes,
-        extra={"pixel_bytes": pixel_bytes, "banks": banks, "max_frames": max_frames, "memory_mib": memory_mib},
+        extra={
+            "pixel_bytes": pixel_bytes, "banks": banks, "max_frames": max_frames, "memory_mib": memory_mib,
+            "erase_verified": erase_verified,
+        },
     )  # fmt: skip
 
 
@@ -67,6 +72,8 @@ MODELS: tuple[Model, ...] = (
         notes="6 MiB measured (the vendor app assumes 7 MiB, too much); checked on firmware "
         "0x0109: identify, clock, system page, stills in all banks, 47-frame animations, reset-screen",
         verified=True,
+        # 0xAC removed the stored pictures and animation, and kept the clock and system pages.
+        erase_verified=True,
     ),
     _tft("rt75", "Epomaker RT75", 0x5002, 3223, 240, 240),
     _tft("rt85", "Epomaker RT85", 0x5002, 2895, 320, 172),

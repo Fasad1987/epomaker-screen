@@ -38,3 +38,9 @@ def test_safe_reset_and_confirmed_erase(fake):
     assert set(fake.banks) == {0, 1, 2, 3, 4} and fake.erased == 0
     assert cli.main(["reset-screen", "--erase", "--yes-erase-screen-flash"]) == 0
     assert fake.erased == 1
+
+
+def test_erase_warning_follows_what_is_verified(fake, capsys):
+    assert cli.main(["reset-screen", "--erase", "--yes-erase-screen-flash"]) == 0
+    assert "kept the clock and system pages" in capsys.readouterr().out
+    assert not by_key("rt75").extra["erase_verified"]
