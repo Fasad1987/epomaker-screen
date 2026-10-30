@@ -302,6 +302,28 @@ class TftSession:
         self.t.close()
 
 
+ERASE_WARNING = """\
+This sends Epomaker's "erase screen flash" command (0xAC). What it does on this keyboard
+is not known yet:
+  - it may bring back the factory picture, or leave the picture page blank;
+  - it may also erase graphics the firmware draws its clock and system pages with,
+    which only Epomaker's own software (Windows/macOS) could put back. On an RT100 Pro
+    those graphics seem to sit in the same memory as the pictures (an over-long
+    animation showed parts of the clock page), so this risk is real.
+Keys, lighting and the rest of the keyboard are not touched. Try the safe reset
+(without --erase) first."""
+
+ERASE_VERIFIED = """\
+This sends Epomaker's "erase screen flash" command (0xAC). On the {name} (firmware 0x0109)
+it removed every stored picture and the animation, and kept the clock and system pages.
+Keys, lighting and the rest of the keyboard are not touched."""
+
+
+def erase_notice(model: Model) -> str:
+    """What erasing the screen flash (0xAC) is known to do on ``model``."""
+    return ERASE_VERIFIED.format(name=model.name) if model.extra.get("erase_verified") else ERASE_WARNING
+
+
 def capabilities(model: Model) -> Capabilities:
     return Capabilities(
         width=model.width,

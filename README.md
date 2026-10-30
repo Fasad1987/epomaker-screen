@@ -89,15 +89,29 @@ Options: `--service` installs only a headless clock-sync service (systemd `--use
 
 ### The app
 
-- **Editor**: a preview of the connected keyboard's screen. Click a widget to select it, drag to move, drag its
-  bottom-right corner to resize; arrow keys nudge by 1 px (Shift+arrows resize), Delete removes it. Each screen
-  size has its own layout, saved automatically in `~/.config/epomaker-screen/`.
-- **Live mode** keeps the widgets on the keyboard up to date. See [docs/live-mode.md](docs/live-mode.md).
-- **Send snapshot** renders the layout once and stores it as a picture.
-- **Pictures/GIFs…** uploads pictures and animations; long animations are thinned out to what Epomaker's
-  software allows for the keyboard (can be turned off in Settings).
-- **Set clock** sets the keyboard clock now.
-- **Pause** releases the keyboard, e.g. for Epomaker Hub. A screen talks to one program at a time.
+The window has the widget list on the left, the screen preview in the middle and the selected widget's
+properties on the right; a card above the preview shows the connected keyboard and its state, and the log is a
+panel at the bottom (**View** hides it).
+
+- **Editor**: click a widget to select it, drag to move, drag its bottom-right corner to resize; arrow keys nudge
+  by 1 px (Shift+arrows resize), Delete removes it, Ctrl+D duplicates it. **Snap** moves in 4 px steps and to the
+  screen centre (hold Alt to place freely), **Grid** shows the steps, **Zoom** sets the preview size. Untick a
+  widget in the list to hide it. **Edit → Align widget** centres it or puts it against an edge; Ctrl+Z / Ctrl+Shift+Z
+  undo and redo. Each screen size has its own layout, saved automatically in `~/.config/epomaker-screen/`.
+- **Widgets**: clock (digital or analog), date, text, system monitor (text, bar, graph or ring), now playing,
+  weather (with a symbol), command output, image, panel, progress of the day/week/month/year and a countdown. Text
+  widgets can have a shadow to stay readable on pictures.
+- **Keyboard** menu:
+  - **Live mode** keeps the widgets on the keyboard up to date. See [docs/live-mode.md](docs/live-mode.md).
+  - **Send snapshot** renders the layout once and stores it as a picture.
+  - **Pictures/GIFs…** uploads pictures and animations; long animations are thinned out to what the keyboard
+    holds (can be turned off in Settings). **Picture into one bank…** (TFT keyboards) replaces one picture and
+    keeps the others.
+  - **Set clock** sets the keyboard clock now.
+  - TFT keyboards: **Switch screen language**, **Clear pictures…** (`reset-screen`) and **Erase screen
+    memory…** (`reset-screen --erase`).
+  - **Keyboard info…** shows the model, firmware and screen capabilities (`probe --identify`).
+  - **Pause** releases the keyboard, e.g. for Epomaker Hub. A screen talks to one program at a time.
 - **File → Settings**: preferred keyboard, tray behaviour, clock sync, frame limit, live mode and the TFT system
   page.
 

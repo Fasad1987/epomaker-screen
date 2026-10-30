@@ -1,13 +1,14 @@
-"""Epomaker Screen: KDE Plasma app for the screens of Epomaker keyboards.
+"""Epomaker Screen: Qt desktop app (editor and tray) for the screens of Epomaker keyboards.
 
-Lives in the system tray, keeps the keyboard clock in sync and lets you
-lay out widgets on the 240x135 screen.
+Lives in the system tray, keeps the keyboard clock in sync and lets you lay
+out widgets on the connected keyboard's screen.
 """
 
 from __future__ import annotations
 
 import copy
 import datetime as dt
+import json
 import sys
 import time
 from pathlib import Path
@@ -16,10 +17,10 @@ from . import __version__
 from .config import Settings, load_layout, save_layout
 from .drivers.base import Animation
 from .drivers.rdm.live import LiveConfig
-from .drivers.tft import MIN_REFRESH_S, RefreshConfig
+from .drivers.tft import MIN_REFRESH_S, RefreshConfig, erase_notice
 from .qt import QtCore, QtGui, QtWidgets, Signal
 from .render import FIT_MODES, RT82, Geometry, load_frames, to_rgb
-from .service import FROZEN, Controller
+from .service import CONNECTED, FROZEN, LIVE, LIVE_STARTING, NO_KEYBOARD, PAUSED, Controller
 from .sources import DataHub, FirmwareSystemInfo
 from .widgets import METRICS, TYPES, Context, Prop, commands_in, new_widget, props_of, render_layout, renderer
 
@@ -27,6 +28,45 @@ Qt = QtCore.Qt
 HANDLE = 6  # resize handle, screen pixels
 APP_ID = "epomaker-screen"
 APP_NAME = "Epomaker Screen"
+HISTORY = 200  # undo steps
+SP = QtWidgets.QStyle.StandardPixmap
+# Icon themes differ between desktops (GNOME has few of these names): fall back to Qt's own icons.
+FALLBACK_ICONS = {
+    "list-add": SP.SP_FileDialogNewFolder,
+    "media-playback-start": SP.SP_MediaPlay,
+    "media-playback-pause": SP.SP_MediaPause,
+    "document-send": SP.SP_ArrowUp,
+    "folder-pictures": SP.SP_DirOpenIcon,
+    "chronometer": SP.SP_BrowserReload,
+    "go-up": SP.SP_ArrowUp,
+    "go-down": SP.SP_ArrowDown,
+    "edit-copy": SP.SP_FileDialogContentsView,
+    "list-remove": SP.SP_TrashIcon,
+    "edit-select-none": SP.SP_DesktopIcon,
+    "edit-undo": SP.SP_ArrowBack,
+    "edit-redo": SP.SP_ArrowForward,
+    "configure": SP.SP_FileDialogDetailedView,
+    "application-exit": SP.SP_DialogCloseButton,
+    "dialog-information": SP.SP_MessageBoxInformation,
+    "edit-clear": SP.SP_DialogResetButton,
+    "document-open": SP.SP_DialogOpenButton,
+    "document-save-as": SP.SP_DialogSaveButton,
+}
+STATE_COLORS = {
+    NO_KEYBOARD: "#9ca3af",
+    CONNECTED: "#22c55e",
+    LIVE: "#38bdf8",
+    LIVE_STARTING: "#38bdf8",
+    PAUSED: "#f59e0b",
+    FROZEN: "#ef4444",
+}
+
+
+def icon(name: str) -> QtGui.QIcon:
+    i = QtGui.QIcon.fromTheme(name)
+    if i.isNull() and name in FALLBACK_ICONS:
+        i = QtWidgets.QApplication.style().standardIcon(FALLBACK_ICONS[name])
+    return i
 
 
 class Bridge(QtCore.QObject):
@@ -39,6 +79,16 @@ class Bridge(QtCore.QObject):
 
 
 # -- screen canvas -------------------------------------------------------------
+
+
+class CanvasView(QtWidgets.QScrollArea):
+    """Holds the canvas; in "Fit" zoom the canvas follows this area's size."""
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        canvas = self.widget()
+        if isinstance(canvas, Canvas):
+            canvas.resize_for_geometry()
 
 
 class Canvas(QtWidgets.QWidget):
@@ -54,8 +104,8 @@ class Canvas(QtWidgets.QWidget):
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setToolTip(
-            "Click a widget to select it; drag to move it, drag its bottom-right corner to resize.\n"
-            "Arrow keys move by 1 px (with Shift: resize). Delete removes it."
+            "Click a widget to select it; drag to move it, drag its bottom-right corner to resize\n"
+            "(hold Alt to ignore the grid). Arrow keys move by 1 px (with Shift: resize). Delete removes it."
         )
 
     def paintEvent(self, e):
@@ -64,6 +114,20 @@ class Canvas(QtWidgets.QWidget):
         p = QtGui.QPainter(self)
         p.fillRect(self.rect(), QtGui.QColor("#000000"))
         p.drawImage(QtCore.QRectF(1, 1, g.width * scale, g.height * scale), img, QtCore.QRectF(0, 0, g.width, g.height))
+        step = self.win.grid
+        if self.win.show_grid and step * scale >= 6:
+            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 40), 1))
+            for x in range(step, g.width, step):
+                p.drawLine(QtCore.QLineF(1 + x * scale, 1, 1 + x * scale, g.height * scale))
+            for y in range(step, g.height, step):
+                p.drawLine(QtCore.QLineF(1, 1 + y * scale, g.width * scale, 1 + y * scale))
+        if self._drag and self.sel is not None:  # centre guides while moving
+            w = self.win.layout["widgets"][self.sel]
+            p.setPen(QtGui.QPen(QtGui.QColor("#ff00ff"), 1, Qt.PenStyle.DotLine))
+            if w["x"] * 2 + w["w"] == g.width:
+                p.drawLine(QtCore.QLineF(1 + g.width * scale / 2, 1, 1 + g.width * scale / 2, g.height * scale))
+            if w["y"] * 2 + w["h"] == g.height:
+                p.drawLine(QtCore.QLineF(1, 1 + g.height * scale / 2, g.width * scale, 1 + g.height * scale / 2))
         p.setPen(QtGui.QColor("#555555"))
         p.drawRect(self.rect().adjusted(0, 0, -1, -1))
         p.end()
@@ -73,13 +137,17 @@ class Canvas(QtWidgets.QWidget):
         return QtCore.QPointF((pos.x() - 1) / self.scale, (pos.y() - 1) / self.scale)
 
     @property
-    def scale(self) -> int:
+    def scale(self) -> float:
+        if self.win.zoom:
+            return float(self.win.zoom)
         g = self.win.geometry
-        return max(1, min(720 // g.width, 480 // g.height))
+        view = getattr(self.win, "canvas_view", None)
+        w, h = (view.viewport().width() - 2, view.viewport().height() - 2) if view is not None else (720, 480)
+        return max(1.0, min(w / g.width, h / g.height, 6.0))
 
     def resize_for_geometry(self) -> None:
         g = self.win.geometry
-        self.setFixedSize(g.width * self.scale + 2, g.height * self.scale + 2)
+        self.setFixedSize(int(g.width * self.scale) + 2, int(g.height * self.scale) + 2)
 
     def _hit(self, pt: QtCore.QPointF) -> int | None:
         widgets = self.win.layout["widgets"]
@@ -115,13 +183,23 @@ class Canvas(QtWidgets.QWidget):
         mode, start, orig = self._drag
         dx, dy = round(pt.x() - start.x()), round(pt.y() - start.y())
         w = self.win.layout["widgets"][self.sel]
+        g = self.win.geometry
+        # Snap to the grid and to the screen centre; hold Alt to place freely.
+        snap = self.win.snap and not e.modifiers() & Qt.KeyboardModifier.AltModifier
+        step = self.win.grid if snap else 1
         if mode == "move":
-            g = self.win.geometry
-            w["x"] = max(-orig["w"] + 4, min(g.width - 4, orig["x"] + dx))
-            w["y"] = max(-orig["h"] + 4, min(g.height - 4, orig["y"] + dy))
+            x, y = orig["x"] + dx, orig["y"] + dy
+            x, y = round(x / step) * step, round(y / step) * step
+            if snap and abs(x * 2 + orig["w"] - g.width) <= 4:
+                x = (g.width - orig["w"]) // 2
+            if snap and abs(y * 2 + orig["h"] - g.height) <= 4:
+                y = (g.height - orig["h"]) // 2
+            w["x"] = max(-orig["w"] + 4, min(g.width - 4, x))
+            w["y"] = max(-orig["h"] + 4, min(g.height - 4, y))
         else:
-            w["w"] = max(4, orig["w"] + dx)
-            w["h"] = max(4, orig["h"] + dy)
+            right, bottom = orig["x"] + orig["w"] + dx, orig["y"] + orig["h"] + dy
+            w["w"] = max(4, round(right / step) * step - orig["x"])
+            w["h"] = max(4, round(bottom / step) * step - orig["y"])
         self.geometry_changed.emit()
         self.update()
 
@@ -243,6 +321,7 @@ class PropertyPanel(QtWidgets.QScrollArea):
         super().__init__()
         self.win = window
         self.setWidgetResizable(True)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.index: int | None = None
         self.geo: dict[str, QtWidgets.QSpinBox] = {}
         self.show_widget(None)
@@ -251,6 +330,8 @@ class PropertyPanel(QtWidgets.QScrollArea):
         self.index = index
         body = QtWidgets.QWidget()
         form = QtWidgets.QFormLayout(body)
+        form.setFieldGrowthPolicy(QtWidgets.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        form.setRowWrapPolicy(QtWidgets.QFormLayout.RowWrapPolicy.WrapLongRows)
         self.geo = {}
         if index is None:
             self._background_form(form)
@@ -260,18 +341,17 @@ class PropertyPanel(QtWidgets.QScrollArea):
             title = QtWidgets.QLabel(f"<b>{t.title}</b>")
             form.addRow(title)
             g = self.win.geometry
-            for key, label, hi in (
-                ("x", "X", g.width),
-                ("y", "Y", g.height),
-                ("w", "Width", 1000),
-                ("h", "Height", 1000),
-            ):
-                sb = QtWidgets.QSpinBox()
-                sb.setRange(-400 if key in "xy" else 1, hi)
-                sb.setValue(int(w[key]))
-                sb.valueChanged.connect(lambda v, key=key: self._set_geo(key, v))
-                self.geo[key] = sb
-                form.addRow(label, sb)
+            for label, pair in (("Position", (("x", g.width), ("y", g.height))), ("Size", (("w", 1000), ("h", 1000)))):
+                row = QtWidgets.QHBoxLayout()
+                for key, hi in pair:
+                    sb = QtWidgets.QSpinBox()
+                    sb.setRange(-400 if key in "xy" else 1, hi)
+                    sb.setValue(int(w[key]))
+                    sb.setPrefix({"x": "x ", "y": "y ", "w": "w ", "h": "h "}[key])
+                    sb.valueChanged.connect(lambda v, key=key: self._set_geo(key, v))
+                    self.geo[key] = sb
+                    row.addWidget(sb)
+                form.addRow(label, row)
             hidden = QtWidgets.QCheckBox("Hidden")
             hidden.setChecked(bool(w.get("hidden")))
             hidden.toggled.connect(lambda v: self._set_raw("hidden", v))
@@ -360,7 +440,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.hub.start()
         self.quitting = False
         self._last_state = ""
+        self._state = NO_KEYBOARD
         self._told_about_tray = False
+        self.zoom = self.settings.zoom  # 0: fit the window
+        self.show_grid = self.settings.show_grid
+        self.snap = self.settings.snap
+        self.grid = 4
+        self._history = [json.dumps(self.layout)]
+        self._hist_pos = 0
+        self._hist_time = 0.0
+        self._hist_sel: int | None = None
 
         self.bridge = Bridge()
         self.bridge.log.connect(self._append_log)
@@ -382,6 +471,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setWindowIcon(app_icon())
         self._build()
         self._build_tray()
+        self._update_undo()
 
         self._save_timer = QtCore.QTimer(self, singleShot=True, interval=800)
         self._save_timer.timeout.connect(self._save)
@@ -396,111 +486,240 @@ class MainWindow(QtWidgets.QMainWindow):
     # UI -------------------------------------------------------------------
 
     def _build(self) -> None:
-        tb = self.addToolBar("Main")
-        tb.setObjectName("main")
-        tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-
-        self.add_menu = QtWidgets.QMenu(self)
-        for name, t in TYPES.items():
-            self.add_menu.addAction(t.title, lambda name=name: self.add_widget(name))
-        add_btn = QtWidgets.QToolButton()
-        add_btn.setText("Add widget")
-        add_btn.setIcon(QtGui.QIcon.fromTheme("list-add"))
-        add_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        add_btn.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
-        add_btn.setMenu(self.add_menu)
-        tb.addWidget(add_btn)
-        tb.addSeparator()
-
-        self.live_action = QtGui.QAction(
-            QtGui.QIcon.fromTheme("media-playback-start"), "Live mode", self, checkable=True
-        )
-        self.live_action.setToolTip("Keep the widgets on the keyboard screen up to date")
-        self.live_action.toggled.connect(self.set_live)
-        tb.addAction(self.live_action)
-        send = tb.addAction(QtGui.QIcon.fromTheme("document-send"), "Send snapshot", self.send_snapshot)
-        send.setToolTip("Render the layout once and store it on the keyboard as a picture")
-        tb.addAction(QtGui.QIcon.fromTheme("folder-pictures"), "Pictures/GIFs…", self.upload_media)
-        tb.addAction(QtGui.QIcon.fromTheme("chronometer"), "Set clock", self.sync_time)
-        self.pause_action = QtGui.QAction(QtGui.QIcon.fromTheme("media-playback-pause"), "Pause", self, checkable=True)
-        self.pause_action.setToolTip("Release the keyboard, e.g. to use Epomaker Hub in a browser")
-        self.pause_action.toggled.connect(self.ctl.set_paused)
-        tb.addAction(self.pause_action)
-
-        menu = self.menuBar().addMenu("&File")
-        menu.addAction("Open layout…", self.open_layout)
-        menu.addAction("Save layout as…", self.save_layout_as)
-        menu.addAction("Export preview PNG…", self.export_png)
-        menu.addSeparator()
-        menu.addAction(QtGui.QIcon.fromTheme("configure"), "Settings…", self.edit_settings)
-        menu.addSeparator()
-        menu.addAction(QtGui.QIcon.fromTheme("application-exit"), "Quit", self.quit)
-        helpm = self.menuBar().addMenu("&Help")
-        helpm.addAction("About", self.about)
+        self._build_actions()
+        self._build_menus()
+        self._build_toolbar()
 
         self.canvas = Canvas(self)
         self.canvas.selected.connect(lambda i: self._select(None if i < 0 else i, from_canvas=True))
         self.canvas.geometry_changed.connect(lambda: self.props.refresh_geometry())
 
+        # left: the widget list
         self.list = QtWidgets.QListWidget()
+        self.list.setToolTip("Topmost first. Untick a widget to hide it.")
         self.list.currentRowChanged.connect(lambda r: self._select(r if r >= 0 else None))
+        self.list.itemChanged.connect(self._on_item_changed)
+        add_btn = QtWidgets.QToolButton()
+        add_btn.setText("Add widget")
+        add_btn.setIcon(icon("list-add"))
+        add_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        add_btn.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        add_btn.setMenu(self.add_menu)
         btns = QtWidgets.QHBoxLayout()
-        for icon, tip, fn in (
+        for name, tip, fn in (
             ("go-up", "Raise (draw on top)", lambda: self.move_widget(1)),
             ("go-down", "Lower", lambda: self.move_widget(-1)),
-            ("edit-copy", "Duplicate", self.duplicate_widget),
-            ("list-remove", "Remove", self.remove_widget),
+            ("edit-copy", "Duplicate (Ctrl+D)", self.duplicate_widget),
+            ("list-remove", "Remove (Delete)", self.remove_widget),
             ("edit-select-none", "Screen background", lambda: self._select(None)),
         ):
             b = QtWidgets.QToolButton()
-            b.setIcon(QtGui.QIcon.fromTheme(icon))
+            b.setIcon(icon(name))
             b.setToolTip(tip)
             b.clicked.connect(fn)
             btns.addWidget(b)
         btns.addStretch()
+        left = QtWidgets.QWidget()
+        lv = QtWidgets.QVBoxLayout(left)
+        lv.setContentsMargins(0, 0, 0, 0)
+        lv.addWidget(add_btn)
+        lv.addWidget(self.list, 1)
+        lv.addLayout(btns)
+        left.setMinimumWidth(200)
 
-        self.props = PropertyPanel(self)
-
-        left = QtWidgets.QVBoxLayout()
-        left.addWidget(self.canvas, 0, Qt.AlignmentFlag.AlignTop)
-        self.hint = hint = QtWidgets.QLabel(
+        # centre: keyboard card, view controls, the screen
+        self.card = QtWidgets.QLabel()
+        self.card.setObjectName("card")
+        self.card.setTextFormat(Qt.TextFormat.RichText)
+        self.card.setWordWrap(True)
+        self.card.setStyleSheet("#card { border: 1px solid palette(mid); border-radius: 6px; padding: 8px; }")
+        view = QtWidgets.QHBoxLayout()
+        self.zoom_box = QtWidgets.QComboBox()
+        self.zoom_box.addItem("Fit", 0)
+        for z in (1, 2, 3, 4):
+            self.zoom_box.addItem(f"{z}×", z)
+        self.zoom_box.setToolTip("Preview size")
+        self.zoom_box.setCurrentIndex(max(0, self.zoom_box.findData(self.zoom)))
+        self.zoom_box.currentIndexChanged.connect(self._on_zoom)
+        grid = QtWidgets.QCheckBox("Grid")
+        grid.setChecked(self.show_grid)
+        grid.toggled.connect(self._on_grid)
+        snap = QtWidgets.QCheckBox("Snap")
+        snap.setToolTip(f"Move and resize in steps of {self.grid} px and snap to the screen centre (Alt: off)")
+        snap.setChecked(self.snap)
+        snap.toggled.connect(self._on_snap)
+        view.addWidget(QtWidgets.QLabel("Zoom"))
+        view.addWidget(self.zoom_box)
+        view.addWidget(grid)
+        view.addWidget(snap)
+        view.addStretch()
+        for name, tip, how in (
+            ("format-justify-center", "Centre horizontally", "hcenter"),
+            ("format-align-vertical-center", "Centre vertically", "vcenter"),
+            ("zoom-fit-best", "Fill the screen", "fill"),
+        ):
+            b = QtWidgets.QToolButton()
+            b.setIcon(icon(name))
+            b.setText({"hcenter": "↔", "vcenter": "↕", "fill": "⤢"}[how])
+            if b.icon().isNull():
+                b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+            b.setToolTip(tip)
+            b.clicked.connect(lambda _c=False, how=how: self.align_widget(how))
+            view.addWidget(b)
+        scroll = self.canvas_view = CanvasView()
+        scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        scroll.setWidget(self.canvas)
+        scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        scroll.setMinimumSize(250, 150)
+        self.hint = QtWidgets.QLabel(
             "On the keyboard: Fn + Right Shift shows the GIF page, where widgets and pictures "
             "appear; Fn + Enter cycles the screen pages."
         )
-        hint.setWordWrap(True)
-        hint.setMaximumWidth(720)
-        left.addWidget(hint)
+        self.hint.setWordWrap(True)
+        self.hint.setEnabled(False)  # drawn in the muted text colour
+        centre = QtWidgets.QWidget()
+        cv = QtWidgets.QVBoxLayout(centre)
+        cv.setContentsMargins(0, 0, 0, 0)
+        cv.addWidget(self.card)
+        cv.addLayout(view)
+        cv.addWidget(scroll, 1)
+        cv.addWidget(self.hint)
+
+        # right: properties of the selection
+        self.props = PropertyPanel(self)
+        self.props.setMinimumWidth(300)
+
+        split = QtWidgets.QSplitter()
+        split.addWidget(left)
+        split.addWidget(centre)
+        split.addWidget(self.props)
+        split.setStretchFactor(1, 1)
+        split.setSizes([220, 640, 320])
+        split.setContentsMargins(6, 6, 6, 0)
+        self.setCentralWidget(split)
+
+        # bottom: the log, as a dock that can be hidden
         self.log_view = QtWidgets.QPlainTextEdit(readOnly=True)
         self.log_view.setMaximumBlockCount(500)
         self.log_view.setPlaceholderText("Log")
-        left.addWidget(self.log_view, 1)
+        self.log_dock = QtWidgets.QDockWidget("Log", self)
+        self.log_dock.setObjectName("log")
+        self.log_dock.setWidget(self.log_view)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.log_dock)
+        self.resizeDocks([self.log_dock], [110], Qt.Orientation.Vertical)
+        self.view_menu.addAction(self.log_dock.toggleViewAction())
+        self.view_menu.addAction(self.toolbar.toggleViewAction())
 
-        right = QtWidgets.QVBoxLayout()
-        right.addWidget(QtWidgets.QLabel("Widgets (topmost first):"))
-        right.addWidget(self.list, 1)
-        right.addLayout(btns)
-        right.addWidget(self.props, 2)
-
-        central = QtWidgets.QWidget()
-        h = QtWidgets.QHBoxLayout(central)
-        h.addLayout(left)
-        rw = QtWidgets.QWidget()
-        rw.setLayout(right)
-        rw.setMinimumWidth(320)
-        h.addWidget(rw, 1)
-        self.setCentralWidget(central)
         self.status = QtWidgets.QLabel("…")
         self.statusBar().addPermanentWidget(self.status)
         self._refresh_list()
-        self.resize(1180, 760)
+        self._update_card()
+        self._update_keyboard_actions()
+        self.resize(1240, 800)
+
+    def _action(self, text: str, fn, icon_name: str = "", shortcut=None, tip: str = "") -> QtGui.QAction:
+        a = QtGui.QAction(icon(icon_name) if icon_name else QtGui.QIcon(), text, self)
+        a.triggered.connect(lambda _checked=False: fn())
+        if shortcut is not None:
+            a.setShortcut(QtGui.QKeySequence(shortcut))
+        if tip:
+            a.setToolTip(tip)
+            a.setStatusTip(tip)
+        return a
+
+    def _build_actions(self) -> None:
+        self.add_menu = QtWidgets.QMenu("Add widget", self)
+        for name, t in TYPES.items():
+            self.add_menu.addAction(t.title, lambda name=name: self.add_widget(name))
+
+        self.live_action = QtGui.QAction(icon("media-playback-start"), "Live mode", self, checkable=True)
+        self.live_action.setToolTip("Keep the widgets on the keyboard screen up to date")
+        self.live_action.toggled.connect(self.set_live)
+        self.pause_action = QtGui.QAction(icon("media-playback-pause"), "Pause", self, checkable=True)
+        self.pause_action.setToolTip("Release the keyboard, e.g. to use Epomaker Hub in a browser")
+        self.pause_action.toggled.connect(self.ctl.set_paused)
+        a = self._action
+        self.snapshot_action = a(
+            "Send snapshot", self.send_snapshot, "document-send", tip="Store the layout on the keyboard as a picture"
+        )
+        self.media_action = a("Pictures/GIFs…", self.upload_media, "folder-pictures", "Ctrl+U")
+        self.bank_action = a(
+            "Picture into one bank…", self.upload_to_bank, tip="Replace one picture and keep the others"
+        )
+        self.clock_action = a("Set clock", self.sync_time, "chronometer", "Ctrl+T")
+        self.language_action = a(
+            "Switch screen language", self.toggle_language, tip="Toggles the language of the keyboard's own pages"
+        )
+        self.reset_action = a(
+            "Clear pictures…", self.reset_screen, "edit-clear", tip="Black pictures and animation (safe)"
+        )
+        self.erase_action = a("Erase screen memory…", self.erase_screen, tip="Remove every picture and the animation")
+        self.info_action = a("Keyboard info…", self.keyboard_info, "dialog-information", "Ctrl+I")
+        self.undo_action = a("Undo", self.undo, "edit-undo", QtGui.QKeySequence.StandardKey.Undo)
+        self.redo_action = a("Redo", self.redo, "edit-redo", QtGui.QKeySequence.StandardKey.Redo)
+        self.duplicate_action = a("Duplicate widget", self.duplicate_widget, "edit-copy", "Ctrl+D")
+
+    def _build_menus(self) -> None:
+        a = self._action
+        menu = self.menuBar().addMenu("&File")
+        menu.addAction(a("Open layout…", self.open_layout, "document-open", QtGui.QKeySequence.StandardKey.Open))
+        menu.addAction(
+            a("Save layout as…", self.save_layout_as, "document-save-as", QtGui.QKeySequence.StandardKey.SaveAs)
+        )
+        menu.addAction(a("Export preview PNG…", self.export_png, shortcut="Ctrl+E"))
+        menu.addSeparator()
+        menu.addAction(a("Settings…", self.edit_settings, "configure", QtGui.QKeySequence.StandardKey.Preferences))
+        menu.addSeparator()
+        menu.addAction(a("Quit", self.quit, "application-exit", QtGui.QKeySequence.StandardKey.Quit))
+        edit = self.menuBar().addMenu("&Edit")
+        edit.addAction(self.undo_action)
+        edit.addAction(self.redo_action)
+        edit.addSeparator()
+        edit.addMenu(self.add_menu)
+        edit.addAction(self.duplicate_action)
+        align = edit.addMenu("Align widget")
+        for text, how in (
+            ("Centre horizontally", "hcenter"),
+            ("Centre vertically", "vcenter"),
+            ("Left edge", "left"),
+            ("Right edge", "right"),
+            ("Top edge", "top"),
+            ("Bottom edge", "bottom"),
+            ("Fill the screen", "fill"),
+        ):
+            align.addAction(text, lambda how=how: self.align_widget(how))
+        kb = self.menuBar().addMenu("&Keyboard")
+        for act in (self.live_action, self.snapshot_action, self.media_action, self.bank_action, self.clock_action):
+            kb.addAction(act)
+        kb.addSeparator()
+        kb.addAction(self.language_action)
+        kb.addAction(self.reset_action)
+        kb.addAction(self.erase_action)
+        kb.addSeparator()
+        kb.addAction(self.info_action)
+        kb.addAction(self.pause_action)
+        self.view_menu = self.menuBar().addMenu("&View")
+        helpm = self.menuBar().addMenu("&Help")
+        helpm.addAction("About", self.about)
+
+    def _build_toolbar(self) -> None:
+        tb = self.toolbar = self.addToolBar("Main")
+        tb.setObjectName("main")
+        tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        tb.setMovable(False)
+        tb.addAction(self.undo_action)
+        tb.addAction(self.redo_action)
+        tb.addSeparator()
+        for act in (self.live_action, self.snapshot_action, self.media_action, self.clock_action, self.pause_action):
+            tb.addAction(act)
 
     def _build_tray(self) -> None:
         self.tray = QtWidgets.QSystemTrayIcon(app_icon(), self)
         m = QtWidgets.QMenu()
         m.addAction("Show window", self.show_window)
         m.addAction(self.live_action)
-        m.addAction("Set keyboard clock", self.sync_time)
-        m.addAction("Send layout snapshot", self.send_snapshot)
+        m.addAction(self.clock_action)
+        m.addAction(self.snapshot_action)
         m.addAction(self.pause_action)
         m.addSeparator()
         m.addAction("Quit", self.quit)
@@ -510,6 +729,23 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.tray.setToolTip(APP_NAME)
         self.tray.show()
+
+    # view -------------------------------------------------------------------
+
+    def _on_zoom(self, _index: int) -> None:
+        self.zoom = self.settings.zoom = self.zoom_box.currentData() or 0
+        self.settings.save()
+        self.canvas.resize_for_geometry()
+        self.canvas.update()
+
+    def _on_grid(self, on: bool) -> None:
+        self.show_grid = self.settings.show_grid = on
+        self.settings.save()
+        self.canvas.update()
+
+    def _on_snap(self, on: bool) -> None:
+        self.snap = self.settings.snap = on
+        self.settings.save()
 
     # layout editing ---------------------------------------------------------
 
@@ -534,12 +770,86 @@ class MainWindow(QtWidgets.QMainWindow):
             item = QtWidgets.QListWidgetItem(
                 f"{t.title if t else w['type']}{': ' + str(detail)[:30] if detail else ''}"
             )
-            if w.get("hidden"):
-                item.setForeground(QtGui.QColor("#888888"))
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Unchecked if w.get("hidden") else Qt.CheckState.Checked)
             self.list.addItem(item)
         if select is not None:
             self.list.setCurrentRow(len(widgets) - 1 - select)
         self.list.blockSignals(False)
+
+    def _on_item_changed(self, item: QtWidgets.QListWidgetItem) -> None:
+        widgets = self.layout["widgets"]
+        i = len(widgets) - 1 - self.list.row(item)
+        hidden = item.checkState() != Qt.CheckState.Checked
+        if 0 <= i < len(widgets) and bool(widgets[i].get("hidden")) != hidden:
+            widgets[i]["hidden"] = hidden
+            if self.props.index == i:
+                self.props.show_widget(i)
+            self.changed()
+
+    def align_widget(self, how: str) -> None:
+        i = self.canvas.sel
+        if i is None:
+            return
+        w, g = self.layout["widgets"][i], self.geometry
+        if how == "hcenter":
+            w["x"] = (g.width - w["w"]) // 2
+        elif how == "vcenter":
+            w["y"] = (g.height - w["h"]) // 2
+        elif how == "left":
+            w["x"] = 0
+        elif how == "right":
+            w["x"] = g.width - w["w"]
+        elif how == "top":
+            w["y"] = 0
+        elif how == "bottom":
+            w["y"] = g.height - w["h"]
+        elif how == "fill":
+            w["x"], w["y"], w["w"], w["h"] = 0, 0, g.width, g.height
+        self.props.refresh_geometry()
+        self.changed()
+
+    # undo ---------------------------------------------------------------------
+
+    def _record(self) -> None:
+        """Adds the layout to the undo history; quick edits of one widget (typing, dragging a spin box) merge."""
+        snap = json.dumps(self.layout)
+        if snap == self._history[self._hist_pos]:
+            return
+        now = time.monotonic()
+        merge = now - self._hist_time < 0.8 and self._hist_sel == self.canvas.sel and self._hist_pos > 0
+        del self._history[self._hist_pos + (0 if merge else 1) :]
+        self._history.append(snap)
+        del self._history[:-HISTORY]
+        self._hist_pos = len(self._history) - 1
+        self._hist_time, self._hist_sel = now, self.canvas.sel
+        self._update_undo()
+
+    def _restore(self, pos: int) -> None:
+        self._hist_pos = pos
+        self._hist_time = 0.0
+        self.layout = json.loads(self._history[pos])
+        sel = self.canvas.sel if self.canvas.sel is not None and self.canvas.sel < len(self.layout["widgets"]) else None
+        self._refresh_list(sel)
+        self._select(sel, from_canvas=True)
+        self.changed(record=False)
+        self._update_undo()
+
+    def undo(self) -> None:
+        if self._hist_pos > 0:
+            self._restore(self._hist_pos - 1)
+
+    def redo(self) -> None:
+        if self._hist_pos + 1 < len(self._history):
+            self._restore(self._hist_pos + 1)
+
+    def _reset_history(self) -> None:
+        self._history, self._hist_pos = [json.dumps(self.layout)], 0
+        self._update_undo()
+
+    def _update_undo(self) -> None:
+        self.undo_action.setEnabled(self._hist_pos > 0)
+        self.redo_action.setEnabled(self._hist_pos + 1 < len(self._history))
 
     def _select(self, index: int | None, from_canvas: bool = False) -> None:
         widgets = self.layout["widgets"]
@@ -597,8 +907,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._select(i + delta, from_canvas=True)
         self.changed()
 
-    def changed(self) -> None:
-        """Called after every edit: preview, autosave, and live mode pick it up."""
+    def changed(self, record: bool = True) -> None:
+        """Called after every edit: preview, autosave, undo history and live mode pick it up."""
+        if record:
+            self._record()
         self.canvas.update()
         self._save_timer.start()
         self._live_layout = copy.deepcopy(self.layout)  # live render thread reads this reference
@@ -703,6 +1015,103 @@ class MainWindow(QtWidgets.QMainWindow):
     def sync_time(self) -> None:
         self.ctl.sync_now(self._done("Keyboard clock set"))
 
+    def _tft_driver(self):
+        if self.driver is None or self.driver.family != "tft" or self.driver.model is None:
+            QtWidgets.QMessageBox.information(self, APP_NAME, "This needs a connected TFT keyboard (RT100 Pro, ...).")
+            return None
+        return self.driver
+
+    def upload_to_bank(self) -> None:
+        d = self._tft_driver()
+        if d is None:
+            return
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Picture", str(Path.home()), "Images (*.png *.jpg *.jpeg *.webp *.bmp *.gif)"
+        )
+        if not path:
+            return
+        bank, ok = QtWidgets.QInputDialog.getInt(
+            self, "Picture bank", f"Bank (1–{d.caps.slots}); the others stay as they are:", 1, 1, d.caps.slots
+        )
+        if not ok:
+            return
+        g = self.geometry
+        try:
+            frames, _fps = load_frames(path, "contain", 1, g)
+        except (OSError, ValueError) as e:
+            QtWidgets.QMessageBox.critical(self, APP_NAME, str(e))
+            return
+        frame = to_rgb(frames[0], g)
+        self._stop_live_for_upload()
+        self.ctl.submit(
+            "picture upload",
+            lambda s: s.upload_still(frame, bank - 1),
+            self._done(f"{Path(path).name} stored in bank {bank}"),
+        )
+
+    def toggle_language(self) -> None:
+        if self._tft_driver() is not None:
+            self.ctl.submit("language", lambda s: s.toggle_language(), self._done("Screen language switched"))
+
+    def reset_screen(self) -> None:
+        if self._tft_driver() is None:
+            return
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "Clear pictures",
+            "Write a black picture into every bank and a black animation? The clock and system pages stay.",
+        )
+        if answer == QtWidgets.QMessageBox.StandardButton.Yes:
+            self._stop_live_for_upload()
+            self.ctl.submit("clear pictures", lambda s: s.reset_screen(), self._done("Pictures cleared"))
+
+    def erase_screen(self) -> None:
+        d = self._tft_driver()
+        if d is None:
+            return
+        verified = d.model.extra.get("erase_verified")
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("Erase screen memory")
+        box.setIcon(QtWidgets.QMessageBox.Icon.Question if verified else QtWidgets.QMessageBox.Icon.Warning)
+        box.setText(erase_notice(d.model).replace("\n", " "))
+        erase = box.addButton("Erase", QtWidgets.QMessageBox.ButtonRole.DestructiveRole)
+        box.addButton(QtWidgets.QMessageBox.StandardButton.Cancel)
+        box.exec()
+        if box.clickedButton() is not erase:
+            return
+        self._stop_live_for_upload()
+        self.ctl.submit("erase screen memory", lambda s: s.erase_screen_flash(), self._done("Screen memory erased"))
+
+    def keyboard_info(self) -> None:
+        d = self.driver
+        if d is None:
+            QtWidgets.QMessageBox.information(self, APP_NAME, "No keyboard connected.")
+            return
+
+        def show(err, res):
+            rows = [("Model", d.name), ("Family", d.family.upper()), ("USB path", d.usb_path or "—")]
+            if d.model is not None:
+                rows.append(("USB id", f"{d.model.vid:04x}:{d.model.pid:04x}"))
+            caps = d.caps
+            if caps is not None:
+                rows += [
+                    ("Screen", f"{caps.width}×{caps.height}"),
+                    ("Pictures", str(caps.slots)),
+                    ("Animation frames", str(caps.max_frames)),
+                    ("Verified", "yes" if caps.verified else "not yet"),
+                ]
+            for key, value in (res or {}).items():
+                if key == "firmware" and isinstance(value, int):
+                    value = f"{value:#06x}"
+                if key not in ("width", "height"):
+                    rows.append((key.replace("_", " ").capitalize(), str(value)))
+            if err:
+                rows.append(("Error", str(err)))
+            table = "".join(f"<tr><td><b>{k}</b></td><td>&nbsp;{v}</td></tr>" for k, v in rows)
+            QtWidgets.QMessageBox.information(self, "Keyboard info", f"<table>{table}</table>")
+
+        self.ctl.submit("keyboard info", lambda s: s.info(), lambda err, res: self.bridge.job_done.emit(show, err, res))
+
     # misc -------------------------------------------------------------------
 
     def _append_log(self, msg: str) -> None:
@@ -720,7 +1129,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.canvas.resize_for_geometry()
             self._refresh_list()
             self._select(None)
-            self.changed()
+            self.changed(record=False)
+            self._reset_history()
         if driver is not None:
             note = "" if caps is None or caps.verified else " — not yet verified on this model"
             size = f" {caps.width}×{caps.height}" if caps else ""
@@ -728,6 +1138,38 @@ class MainWindow(QtWidgets.QMainWindow):
             self.hint.setText(self._hint(driver))
         else:
             self.setWindowTitle(APP_NAME)
+        self._update_card()
+        self._update_keyboard_actions()
+
+    def _update_card(self) -> None:
+        d = self.driver
+        color = STATE_COLORS.get(self._state, "#9ca3af")
+        dot = f'<span style="color:{color}">●</span>'
+        if d is None:
+            self.card.setText(
+                f"{dot} <b>No keyboard</b><br><small>Connect an Epomaker keyboard with a screen by cable.</small>"
+            )
+            return
+        caps = d.caps
+        facts = []
+        if caps is not None:
+            facts.append(f"{caps.width}×{caps.height}")
+            facts.append(f"{caps.slots} picture{'s' if caps.slots > 1 else ''}")
+            if caps.max_frames > 1:
+                facts.append(f"animations up to {caps.max_frames} frames")
+            facts.append("live widgets" if caps.live == "stream" else "redrawn widgets")
+            if not caps.verified:
+                facts.append("<i>not yet verified on this model</i>")
+        self.card.setText(f"{dot} <b>{d.name}</b> — {self._state}<br><small>{' · '.join(facts)}</small>")
+
+    def _update_keyboard_actions(self) -> None:
+        d = self.driver
+        tft = d is not None and d.family == "tft"
+        for act in (self.snapshot_action, self.media_action, self.clock_action, self.info_action):
+            act.setEnabled(d is not None)
+        for act in (self.bank_action, self.language_action, self.reset_action, self.erase_action):
+            act.setEnabled(tft)
+            act.setVisible(d is None or tft)
 
     @staticmethod
     def _hint(driver) -> str:
@@ -736,14 +1178,17 @@ class MainWindow(QtWidgets.QMainWindow):
                 "On the keyboard: Fn + Right Shift shows the GIF page, where widgets and pictures appear; "
                 "Fn + Enter cycles the screen pages."
             )
+        keys = "Fn + PgUp / PgDn" if driver.model is not None and driver.model.key == "rt100pro" else "its screen keys"
         return (
-            "Pictures go into the keyboard's picture banks; switch the screen to its picture page with the "
-            "keyboard's screen keys. Its own clock and system pages are kept up to date automatically."
+            f"Pictures go into the keyboard's picture banks; switch the screen pages with {keys}. With an animation "
+            "stored, the keyboard returns to it after a while. Its own clock and system pages are kept up to date."
         )
 
     def _on_state(self, s: str) -> None:
         name = self.driver.name if self.driver is not None else "Keyboard"
         self.status.setText(f"{name}: {s}")
+        self._state = s
+        self._update_card()
         self.tray.setToolTip(f"{APP_NAME} — {name}: {s}")
         if s == FROZEN and self._last_state != FROZEN:
             self.notify(

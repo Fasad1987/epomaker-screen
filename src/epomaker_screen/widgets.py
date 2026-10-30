@@ -5,12 +5,13 @@ A layout is plain JSON::
     {"background": "#101820", "background_image": "", "widgets": [
         {"type": "clock", "x": 0, "y": 10, "w": 240, "h": 60, "props": {...}}, ...]}
 
-Coordinates are screen pixels (240x135).
+Coordinates are screen pixels of the keyboard's screen (240x135 on the RT82).
 """
 
 from __future__ import annotations
 
 import copy
+import datetime as dt
 import math
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -38,6 +39,7 @@ TEXT_PROPS = [
     Prop("bold", "Bold", "bool", False),
     Prop("align", "Alignment", "choice", "center", ALIGN),
     Prop("fit", "Shrink to fit", "bool", True),
+    Prop("shadow", "Shadow (easier to read on pictures)", "bool", False),
 ]
 
 METRICS = {
@@ -97,8 +99,12 @@ def draw_text(p: QtGui.QPainter, r: QtCore.QRectF, text: str, props: dict, color
             size -= 1
             font = _font(props, size)
     p.setFont(font)
+    flags = int(_align(props)) | int(Qt.TextFlag.TextWordWrap)
+    if props.get("shadow"):
+        p.setPen(QtGui.QColor(0, 0, 0, 200))
+        p.drawText(r.translated(1, 1), flags, text)
     p.setPen(QtGui.QColor(color or props.get("color", "#ffffff")))
-    p.drawText(r, int(_align(props)) | int(Qt.TextFlag.TextWordWrap), text)
+    p.drawText(r, flags, text)
 
 
 def _datetime(t: float) -> QtCore.QDateTime:
@@ -127,7 +133,44 @@ def _metric_text(metric: str, v: float | None) -> str:
 
 
 def paint_clock(p, r, props, ctx):
+    if props.get("style") == "analog":
+        _analog_clock(p, r, props, ctx)
+        return
     draw_text(p, r, QtCore.QLocale().toString(_datetime(ctx.t), props.get("format", "HH:mm")), props)
+
+
+def _hand(p, c: QtCore.QPointF, angle_deg: float, length: float, width: float, color: QtGui.QColor) -> None:
+    a = math.radians(angle_deg - 90)
+    pen = QtGui.QPen(color, width)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    p.setPen(pen)
+    p.drawLine(c, QtCore.QPointF(c.x() + length * math.cos(a), c.y() + length * math.sin(a)))
+
+
+def _analog_clock(p, r, props, ctx):
+    t = _datetime(ctx.t).time()
+    rad = min(r.width(), r.height()) / 2 - 1
+    c = r.center()
+    color = QtGui.QColor(props.get("color", "#ffffff"))
+    accent = QtGui.QColor(props.get("accent", "#f59e0b"))
+    p.save()
+    p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+    p.setBrush(QtGui.QColor(props.get("face", "#00000000")))
+    p.setPen(QtGui.QPen(color, max(1.0, rad / 30)))
+    p.drawEllipse(c, rad, rad)
+    for i in range(12):  # hour ticks
+        a = math.radians(i * 30)
+        inner = rad * (0.78 if i % 3 == 0 else 0.86)
+        p.drawLine(
+            QtCore.QPointF(c.x() + inner * math.sin(a), c.y() - inner * math.cos(a)),
+            QtCore.QPointF(c.x() + rad * 0.95 * math.sin(a), c.y() - rad * 0.95 * math.cos(a)),
+        )
+    h, m, s = t.hour() % 12, t.minute(), t.second()
+    _hand(p, c, (h + m / 60) * 30, rad * 0.5, max(2.0, rad / 12), color)
+    _hand(p, c, (m + s / 60) * 6, rad * 0.75, max(1.5, rad / 18), color)
+    if props.get("seconds", True):
+        _hand(p, c, s * 6, rad * 0.85, 1.0, accent)
+    p.restore()
 
 
 def paint_date(p, r, props, ctx):
@@ -188,7 +231,24 @@ def paint_sysmon(p, r, props, ctx):
         draw_text(p, r, text, props)
         return
     p.save()
-    if style == "bar":
+    if style == "ring":
+        frac = 0.0 if v is None else max(0.0, min(1.0, v / 100.0))
+        if metric.startswith("net"):
+            frac = 0.0 if v is None else min(1.0, math.log10(1 + v) / 8)
+        side = min(r.width(), r.height())
+        thick = max(2.0, side / 9)
+        box = QtCore.QRectF(0, 0, side - thick, side - thick)
+        box.moveCenter(r.center())
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for col, span in ((QtGui.QColor(props.get("track", "#333333")), 1.0), (accent, frac)):
+            pen = QtGui.QPen(col, thick)
+            pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+            p.setPen(pen)
+            p.drawArc(box, 90 * 16, -int(360 * 16 * span))
+        inner = box.adjusted(thick, thick, -thick, -thick)
+        draw_text(p, inner, f"{label}\n{_metric_text(metric, v)}".strip(), dict(props, fit=True), color.name())
+    elif style == "bar":
         frac = 0.0 if v is None else max(0.0, min(1.0, v / 100.0))
         if metric.startswith("net"):
             frac = 0.0 if v is None else min(1.0, math.log10(1 + v) / 8)
@@ -254,7 +314,8 @@ def paint_weather(p, r, props, ctx):
         key = ""
     w = ctx.data.get(key) or {}
     if "temp" in w and w["temp"] is not None:
-        text = (
+        icon = _weather_icon(int(w.get("code", -1))) if props.get("icon", True) else ""
+        text = icon + (
             props.get("format", "{city} {temp:+.0f}°C {text}")
             .format(city=props.get("city", ""), temp=float(w["temp"]), text=w.get("text", ""), wind=w.get("wind") or 0)
             .strip()
@@ -262,6 +323,17 @@ def paint_weather(p, r, props, ctx):
     else:
         text = "weather…" if "error" not in w else "offline"
     draw_text(p, r, text, props)
+
+
+def _weather_icon(code: int) -> str:
+    """A plain symbol for a WMO weather code (fonts on every desktop have these)."""
+    for codes, sym in (
+        ((0, 1), "☀ "), ((2,), "⛅ "), ((3,), "☁ "), ((45, 48), "≡ "),
+        ((71, 73, 75, 77, 85, 86), "❄ "), ((95, 96, 99), "⚡ "),
+    ):  # fmt: skip
+        if code in codes:
+            return sym
+    return "☂ " if 51 <= code <= 82 else ""
 
 
 def paint_command(p, r, props, ctx):
@@ -272,16 +344,61 @@ def paint_command(p, r, props, ctx):
         draw_text(p, r, out, props)
 
 
+PERIODS = {"day": "Day", "week": "Week", "month": "Month", "year": "Year"}
+
+
+def period_fraction(t: float, period: str) -> float:
+    """How much of the current day/week/month/year (local time) has passed at ``t``."""
+    now = dt.datetime.fromtimestamp(t)
+    day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if period == "week":
+        start = day - dt.timedelta(days=now.weekday())
+        end = start + dt.timedelta(days=7)
+    elif period == "month":
+        start = day.replace(day=1)
+        end = (start + dt.timedelta(days=32)).replace(day=1)
+    elif period == "year":
+        start = day.replace(month=1, day=1)
+        end = start.replace(year=start.year + 1)
+    else:
+        start, end = day, day + dt.timedelta(days=1)
+    return (now - start) / (end - start)
+
+
 def paint_progress_day(p, r, props, ctx):
-    dt = _datetime(ctx.t)
-    secs = dt.time().msecsSinceStartOfDay() / 1000
-    frac = secs / 86400
+    period = props.get("period", "day")
+    frac = period_fraction(ctx.t, period)
     p.fillRect(r, QtGui.QColor(props.get("track", "#333333")))
     p.fillRect(
         QtCore.QRectF(r.left(), r.top(), r.width() * frac, r.height()), QtGui.QColor(props.get("accent", "#f59e0b"))
     )
     if props.get("show_text", True):
-        draw_text(p, r, f"{frac * 100:.0f}% of the day", props)
+        draw_text(p, r, f"{frac * 100:.0f}% of the {PERIODS.get(period, 'Day').lower()}", props)
+
+
+def countdown_text(t: float, props: dict) -> str:
+    try:
+        target = dt.datetime.fromisoformat(str(props.get("target", "")).strip())
+    except ValueError:
+        return "set a date: 2026-12-31 23:59"
+    left = int((target - dt.datetime.fromtimestamp(t)).total_seconds())
+    if left <= 0:
+        return props.get("done", "Now!")
+    d, rest = divmod(left, 86400)
+    h, rest = divmod(rest, 3600)
+    m, s = divmod(rest, 60)
+    try:
+        return (
+            props.get("format", "{label} {d}d {h:02}:{m:02}")
+            .format(label=props.get("label", ""), d=d, h=h, m=m, s=s)
+            .strip()
+        )
+    except (KeyError, ValueError, IndexError):
+        return "format: use {label} {d} {h} {m} {s}"
+
+
+def paint_countdown(p, r, props, ctx):
+    draw_text(p, r, countdown_text(ctx.t, props), props)
 
 
 TYPES: dict[str, WidgetType] = {}
@@ -295,7 +412,14 @@ _register(
     WidgetType(
         "clock",
         "Clock",
-        [Prop("format", "Format (Qt: HH:mm:ss)", "text", "HH:mm"), *TEXT_PROPS],
+        [
+            Prop("style", "Style", "choice", "digital", {"digital": "Digital", "analog": "Analog"}),
+            Prop("format", "Format (digital; Qt: HH:mm:ss)", "text", "HH:mm"),
+            Prop("seconds", "Second hand (analog)", "bool", True),
+            Prop("accent", "Second hand color", "color", "#f59e0b"),
+            Prop("face", "Face color (analog)", "color", "#00000000"),
+            *TEXT_PROPS,
+        ],
         paint_clock,
         (200, 60),
     )
@@ -316,7 +440,7 @@ _register(
         "System monitor",
         [
             Prop("metric", "Metric", "choice", "cpu", METRICS),
-            Prop("style", "Style", "choice", "text", {"text": "Text", "bar": "Bar", "graph": "Graph"}),
+            Prop("style", "Style", "choice", "text", {"text": "Text", "bar": "Bar", "graph": "Graph", "ring": "Ring"}),
             Prop("label", "Label", "text", "CPU"),
             Prop("accent", "Bar/graph color", "color", "#38bdf8"),
             Prop("track", "Bar background", "color", "#333333"),
@@ -349,6 +473,7 @@ _register(
             Prop("lat", "Latitude", "float", 55.75, {"min": -90, "max": 90}),
             Prop("lon", "Longitude", "float", 37.62, {"min": -180, "max": 180}),
             Prop("format", "Format ({city} {temp} {text} {wind})", "text", "{city} {temp:+.0f}°C {text}"),
+            Prop("icon", "Weather symbol", "bool", True),
             *TEXT_PROPS,
         ],
         paint_weather,
@@ -396,8 +521,9 @@ _register(
 _register(
     WidgetType(
         "dayprogress",
-        "Day progress",
+        "Progress of the day/week/month/year",
         [
+            Prop("period", "Period", "choice", "day", PERIODS),
             Prop("accent", "Color", "color", "#f59e0b"),
             Prop("track", "Background", "color", "#333333"),
             Prop("show_text", "Show percentage", "bool", True),
@@ -405,6 +531,21 @@ _register(
         ],
         paint_progress_day,
         (240, 12),
+    )
+)
+_register(
+    WidgetType(
+        "countdown",
+        "Countdown",
+        [
+            Prop("target", "Date and time (YYYY-MM-DD HH:MM)", "text", f"{dt.date.today().year}-12-31 23:59"),
+            Prop("label", "Label", "text", "New Year in"),
+            Prop("format", "Format ({label} {d} {h:02} {m:02} {s:02})", "text", "{label} {d}d {h:02}:{m:02}"),
+            Prop("done", "Text when it is over", "text", "Now!"),
+            *TEXT_PROPS,
+        ],
+        paint_countdown,
+        (240, 24),
     )
 )
 

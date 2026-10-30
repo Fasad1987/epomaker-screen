@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- The app has a new layout: widget list, preview and properties side by side, a card with the connected keyboard
+  and its state, the log as a panel that can be hidden, and icons that fall back to Qt's own where the desktop's
+  icon theme lacks them (GNOME).
+- Editor: undo and redo, zoom (fit or 1–4×), a grid, snapping to 4 px steps and the screen centre (Alt: off),
+  alignment commands, hiding widgets from the list, Ctrl+D to duplicate; zoom, grid and snap are remembered.
+- Keyboard menu with what `epomakerctl` can do: a picture into one bank, switching the screen language, clearing
+  pictures, erasing the screen memory (with the model's own notice) and a keyboard info window.
+- Widgets: analog clock, ring style for the system monitor, weather symbols, progress of the week, month or year,
+  a countdown widget and an optional text shadow.
+
 ### Changed
 - `reset-screen --erase` (`0xAC`) is verified on the RT100 Pro: it removes every stored picture and the animation
   and keeps the clock and system pages. Its warning is now model-specific; other models keep the full warning.
