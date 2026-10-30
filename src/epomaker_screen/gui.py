@@ -1,4 +1,4 @@
-"""RT82 Screen: KDE Plasma app for the Epomaker RT82 keyboard screen.
+"""Epomaker Screen: KDE Plasma app for the screens of Epomaker keyboards.
 
 Lives in the system tray, keeps the keyboard clock in sync and lets you
 lay out widgets on the 240x135 screen.
@@ -12,20 +12,21 @@ import sys
 import time
 from pathlib import Path
 
-from . import __version__, qgif
+from . import __version__
 from .config import Settings, load_layout, save_layout
-from .live import LiveConfig
-from .protocol import HEIGHT, MAX_FRAMES, MAX_SLOTS, QGIF_HEIGHT, VERIFIED_UPLOAD_BYTES, WIDTH
+from .drivers.base import Animation
+from .drivers.rdm.live import LiveConfig
+from .drivers.tft import RefreshConfig
 from .qt import QtCore, QtGui, QtWidgets, Signal
-from .render import FIT_MODES, load_frames, to_rgb
+from .render import FIT_MODES, RT82, Geometry, load_frames, to_rgb
 from .service import FROZEN, Controller
-from .sources import DataHub
+from .sources import DataHub, FirmwareSystemInfo
 from .widgets import METRICS, TYPES, Context, Prop, new_widget, props_of, render_layout, renderer
 
 Qt = QtCore.Qt
-SCALE = 3
 HANDLE = 6  # resize handle, screen pixels
-APP_ID = "rt82-plasma"
+APP_ID = "epomaker-screen"
+APP_NAME = "Epomaker Screen"
 
 
 class Bridge(QtCore.QObject):
@@ -34,6 +35,7 @@ class Bridge(QtCore.QObject):
     log = Signal(str)
     state = Signal(str)
     job_done = Signal(object, object, object)  # callback, error, result
+    device = Signal(object)  # driver or None
 
 
 # -- screen canvas -------------------------------------------------------------
@@ -48,7 +50,7 @@ class Canvas(QtWidgets.QWidget):
         self.win = window
         self.sel: int | None = None
         self._drag: tuple[str, QtCore.QPointF, dict] | None = None
-        self.setFixedSize(WIDTH * SCALE + 2, HEIGHT * SCALE + 2)
+        self.resize_for_geometry()
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setToolTip(
@@ -57,17 +59,27 @@ class Canvas(QtWidgets.QWidget):
         )
 
     def paintEvent(self, e):
-        img = render_layout(self.win.layout, Context(time.time(), self.win.hub.snapshot(), preview=True), self.sel)
+        g, scale = self.win.geometry, self.scale
+        img = render_layout(self.win.layout, Context(time.time(), self.win.hub.snapshot(), preview=True), self.sel, g)
         p = QtGui.QPainter(self)
         p.fillRect(self.rect(), QtGui.QColor("#000000"))
-        p.drawImage(QtCore.QRectF(1, 1, WIDTH * SCALE, HEIGHT * SCALE), img, QtCore.QRectF(0, 0, WIDTH, HEIGHT))
+        p.drawImage(QtCore.QRectF(1, 1, g.width * scale, g.height * scale), img, QtCore.QRectF(0, 0, g.width, g.height))
         p.setPen(QtGui.QColor("#555555"))
         p.drawRect(self.rect().adjusted(0, 0, -1, -1))
         p.end()
 
     def _screen_pos(self, e) -> QtCore.QPointF:
         pos = e.position()
-        return QtCore.QPointF((pos.x() - 1) / SCALE, (pos.y() - 1) / SCALE)
+        return QtCore.QPointF((pos.x() - 1) / self.scale, (pos.y() - 1) / self.scale)
+
+    @property
+    def scale(self) -> int:
+        g = self.win.geometry
+        return max(1, min(720 // g.width, 480 // g.height))
+
+    def resize_for_geometry(self) -> None:
+        g = self.win.geometry
+        self.setFixedSize(g.width * self.scale + 2, g.height * self.scale + 2)
 
     def _hit(self, pt: QtCore.QPointF) -> int | None:
         widgets = self.win.layout["widgets"]
@@ -104,8 +116,9 @@ class Canvas(QtWidgets.QWidget):
         dx, dy = round(pt.x() - start.x()), round(pt.y() - start.y())
         w = self.win.layout["widgets"][self.sel]
         if mode == "move":
-            w["x"] = max(-orig["w"] + 4, min(WIDTH - 4, orig["x"] + dx))
-            w["y"] = max(-orig["h"] + 4, min(HEIGHT - 4, orig["y"] + dy))
+            g = self.win.geometry
+            w["x"] = max(-orig["w"] + 4, min(g.width - 4, orig["x"] + dx))
+            w["y"] = max(-orig["h"] + 4, min(g.height - 4, orig["y"] + dy))
         else:
             w["w"] = max(4, orig["w"] + dx)
             w["h"] = max(4, orig["h"] + dy)
@@ -246,7 +259,13 @@ class PropertyPanel(QtWidgets.QScrollArea):
             t = TYPES[w["type"]]
             title = QtWidgets.QLabel(f"<b>{t.title}</b>")
             form.addRow(title)
-            for key, label, hi in (("x", "X", WIDTH), ("y", "Y", HEIGHT), ("w", "Width", 400), ("h", "Height", 400)):
+            g = self.win.geometry
+            for key, label, hi in (
+                ("x", "X", g.width),
+                ("y", "Y", g.height),
+                ("w", "Width", 1000),
+                ("h", "Height", 1000),
+            ):
                 sb = QtWidgets.QSpinBox()
                 sb.setRange(-400 if key in "xy" else 1, hi)
                 sb.setValue(int(w[key]))
@@ -332,7 +351,9 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__()
         self.app = app
         self.settings = Settings.load()
-        self.layout = load_layout()
+        self.driver = None
+        self.geometry: Geometry = RT82
+        self.layout = load_layout(geometry=self.geometry)
         self._live_layout = copy.deepcopy(self.layout)
         self.hub = DataHub()
         self.hub.configure(self.layout)
@@ -345,14 +366,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.bridge.log.connect(self._append_log)
         self.bridge.state.connect(self._on_state)
         self.bridge.job_done.connect(lambda cb, err, res: cb(err, res))
+        self.bridge.device.connect(self._on_device)
         self.ctl = Controller(
             log=self.bridge.log.emit,
             on_state=self.bridge.state.emit,
+            on_device=self.bridge.device.emit,
             auto_sync=self.settings.auto_sync_time,
             resync_hours=self.settings.resync_hours,
+            prefer=self.settings.device,
         )
+        if self.settings.system_info:
+            self.ctl.set_system_info(FirmwareSystemInfo())
 
-        self.setWindowTitle("RT82 Screen")
+        self.setWindowTitle(APP_NAME)
         self.setWindowIcon(app_icon())
         self._build()
         self._build_tray()
@@ -437,12 +463,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         left = QtWidgets.QVBoxLayout()
         left.addWidget(self.canvas, 0, Qt.AlignmentFlag.AlignTop)
-        hint = QtWidgets.QLabel(
+        self.hint = hint = QtWidgets.QLabel(
             "On the keyboard: Fn + Right Shift shows the GIF page, where widgets and pictures "
             "appear; Fn + Enter cycles the screen pages."
         )
         hint.setWordWrap(True)
-        hint.setMaximumWidth(WIDTH * SCALE)
+        hint.setMaximumWidth(720)
         left.addWidget(hint)
         self.log_view = QtWidgets.QPlainTextEdit(readOnly=True)
         self.log_view.setMaximumBlockCount(500)
@@ -482,7 +508,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tray.activated.connect(
             lambda reason: self.show_window() if reason == QtWidgets.QSystemTrayIcon.ActivationReason.Trigger else None
         )
-        self.tray.setToolTip("RT82 Screen")
+        self.tray.setToolTip(APP_NAME)
         self.tray.show()
 
     # layout editing ---------------------------------------------------------
@@ -582,7 +608,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _save(self) -> None:
         try:
-            save_layout(self.layout)
+            save_layout(self.layout, geometry_key=self.geometry.key)
         except OSError as e:
             self._append_log(f"could not save the layout: {e}")
 
@@ -602,8 +628,17 @@ class MainWindow(QtWidgets.QMainWindow):
     def set_live(self, on: bool) -> None:
         self.settings.live = on
         self.settings.save()
-        self.ctl.set_live(on, lambda: renderer(lambda: self._live_layout, self.hub.snapshot), self.settings.live_config)
-        if on:
+        self.ctl.set_live(
+            on,
+            lambda geometry: renderer(lambda: self._live_layout, self.hub.snapshot, geometry),
+            {"rdm": self.settings.live_config, "tft": self.settings.refresh_config},
+        )
+        if on and self.driver is not None and self.driver.family == "tft":
+            self._append_log(
+                f"live mode on: the picture is redrawn every {self.settings.refresh_config.interval_s:g} s "
+                "when it changed. Each update rewrites a picture bank in the keyboard's flash."
+            )
+        elif on:
             self._append_log("live mode on (the screen is erased once at start, which takes a few seconds)")
 
     def _stop_live_for_upload(self) -> None:
@@ -612,57 +647,58 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def send_snapshot(self) -> None:
         self._stop_live_for_upload()
-        img = render_layout(self.layout, Context(time.time(), self.hub.snapshot()))
-        data = qgif.encode([to_rgb(img)], WIDTH, QGIF_HEIGHT, 1)
-        self.ctl.submit("snapshot upload", lambda s: s.upload([data]), self._done("Snapshot sent to the keyboard"))
+        g = self.geometry
+        frame = to_rgb(render_layout(self.layout, Context(time.time(), self.hub.snapshot()), geometry=g), g)
+        self.ctl.submit(
+            "snapshot upload", lambda s: s.upload([Animation([frame], 1)]), self._done("Snapshot sent to the keyboard")
+        )
 
     def upload_media(self) -> None:
+        caps = self.driver.caps if self.driver is not None else None
+        if caps is None:
+            QtWidgets.QMessageBox.information(self, APP_NAME, "Connect a keyboard with a screen first.")
+            return
+        slots, name = caps.slots, self.driver.name
         paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
             self,
-            f"Up to {MAX_SLOTS} pictures or GIFs",
+            f"Up to {slots} pictures or GIFs",
             str(Path.home()),
-            "Images and animations (*.gif *.png *.jpg *.jpeg *.webp *.bmp *.qgif)",
+            "Images and animations (*.gif *.png *.jpg *.jpeg *.webp *.bmp)",
         )
         if not paths:
             return
-        if len(paths) > MAX_SLOTS:
+        if len(paths) > slots:
             QtWidgets.QMessageBox.warning(
-                self, "RT82", f"The keyboard stores up to {MAX_SLOTS} screens; the first {MAX_SLOTS} will be uploaded."
+                self, APP_NAME, f"{name} stores up to {slots} pictures; the first {slots} will be uploaded."
             )
-            paths = paths[:MAX_SLOTS]
+            paths = paths[:slots]
+        g = self.geometry
         fit, ok = QtWidgets.QInputDialog.getItem(
-            self, "Scaling", "How to fit into 240×135:", list(FIT_MODES.values()), 0, False
+            self, "Scaling", f"How to fit into {g.width}×{g.height}:", list(FIT_MODES.values()), 0, False
         )
         if not ok:
             return
         mode = next(k for k, v in FIT_MODES.items() if v == fit)
-        images = []
+        items = []
         try:
             QtWidgets.QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
             for p in paths:
-                if p.endswith(".qgif"):
-                    images.append(Path(p).read_bytes())
-                    continue
-                frames, fps = load_frames(p, mode, MAX_FRAMES if self.settings.limit_frames else 0)
-                images.append(qgif.encode([to_rgb(f) for f in frames], WIDTH, QGIF_HEIGHT, fps))
-                self._append_log(f"{Path(p).name}: {len(frames)} frame(s), {fps} fps, {len(images[-1]) // 1024} KB")
+                frames, fps = load_frames(p, mode, caps.max_frames if self.settings.limit_frames else 0, g)
+                items.append(Animation([to_rgb(f, g) for f in frames], fps))
+                self._append_log(f"{Path(p).name}: {len(frames)} frame(s), {fps} fps")
         except (OSError, ValueError) as e:
-            QtWidgets.QMessageBox.critical(self, "RT82", str(e))
+            QtWidgets.QMessageBox.critical(self, APP_NAME, str(e))
             return
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
-        total = sum(map(len, images))
-        if total > VERIFIED_UPLOAD_BYTES:
-            answer = QtWidgets.QMessageBox.question(
-                self,
-                "RT82",
-                f"{total // 1024} KB is more than has been tried on an RT82. "
-                "If the screen shows garbage, use fewer frames. Upload anyway?",
+        animations = sum(1 for i in items if len(i.frames) > 1)
+        if animations > caps.max_animations or (animations and caps.max_animations == 1 and len(items) > 1):
+            QtWidgets.QMessageBox.warning(
+                self, APP_NAME, f"{name} takes either one animation or up to {slots} still pictures."
             )
-            if answer != QtWidgets.QMessageBox.StandardButton.Yes:
-                return
+            return
         self._stop_live_for_upload()
-        self.ctl.submit("picture upload", lambda s: s.upload(images), self._done("Pictures uploaded"))
+        self.ctl.submit("picture upload", lambda s: s.upload(items), self._done("Pictures uploaded"))
 
     def sync_time(self) -> None:
         self.ctl.sync_now(self._done("Keyboard clock set"))
@@ -672,9 +708,43 @@ class MainWindow(QtWidgets.QMainWindow):
     def _append_log(self, msg: str) -> None:
         self.log_view.appendPlainText(f"{dt.datetime.now():%H:%M:%S}  {msg}")
 
+    def _on_device(self, driver) -> None:
+        """A keyboard was connected, identified or removed: follow its screen size."""
+        self.driver = driver
+        caps = driver.caps if driver is not None else None
+        geometry = Geometry.of(caps) if caps is not None else self.geometry
+        if geometry != self.geometry:
+            self._save()
+            self.geometry = geometry
+            self.layout = load_layout(geometry=geometry)
+            self.canvas.resize_for_geometry()
+            self._refresh_list()
+            self._select(None)
+            self.changed()
+        if driver is not None:
+            note = "" if caps is None or caps.verified else " — not yet verified on this model"
+            size = f" {caps.width}×{caps.height}" if caps else ""
+            self.setWindowTitle(f"{APP_NAME} — {driver.name}{size}{note}")
+            self.hint.setText(self._hint(driver))
+        else:
+            self.setWindowTitle(APP_NAME)
+
+    @staticmethod
+    def _hint(driver) -> str:
+        if driver.family == "rdm":
+            return (
+                "On the keyboard: Fn + Right Shift shows the GIF page, where widgets and pictures appear; "
+                "Fn + Enter cycles the screen pages."
+            )
+        return (
+            "Pictures go into the keyboard's picture banks; switch the screen to its picture page with the "
+            "keyboard's screen keys. Its own clock and system pages are kept up to date automatically."
+        )
+
     def _on_state(self, s: str) -> None:
-        self.status.setText(f"Keyboard: {s}")
-        self.tray.setToolTip(f"RT82 Screen — {s}")
+        name = self.driver.name if self.driver is not None else "Keyboard"
+        self.status.setText(f"{name}: {s}")
+        self.tray.setToolTip(f"{APP_NAME} — {name}: {s}")
         if s == FROZEN and self._last_state != FROZEN:
             self.notify(
                 "The keyboard screen stopped responding. Unplug the cable, switch the keyboard off with its "
@@ -691,29 +761,36 @@ class MainWindow(QtWidgets.QMainWindow):
                 if error
                 else QtWidgets.QSystemTrayIcon.MessageIcon.Information
             )
-            self.tray.showMessage("RT82 Screen", text, icon, 4000)
+            self.tray.showMessage(APP_NAME, text, icon, 4000)
         elif error:
             self.statusBar().showMessage(text, 8000)
 
     def open_layout(self) -> None:
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Open layout", str(Path.home()), "RT82 layout (*.json)")
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Open layout", str(Path.home()), "Screen layout (*.json)")
         if path:
-            self.layout = load_layout(Path(path))
+            self.layout = load_layout(Path(path), self.geometry)
             self._refresh_list()
             self._select(None)
             self.changed()
 
     def save_layout_as(self) -> None:
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self, "Save layout", str(Path.home() / "rt82-layout.json"), "RT82 layout (*.json)"
+            self,
+            "Save layout",
+            str(Path.home() / f"epomaker-layout-{self.geometry.key}.json"),
+            "Screen layout (*.json)",
         )
         if path:
             save_layout(self.layout, Path(path))
 
     def export_png(self) -> None:
-        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Export", str(Path.home() / "rt82.png"), "PNG (*.png)")
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Export", str(Path.home() / "epomaker-screen.png"), "PNG (*.png)"
+        )
         if path:
-            render_layout(self.layout, Context(time.time(), self.hub.snapshot())).copy(0, 0, WIDTH, HEIGHT).save(path)
+            g = self.geometry
+            img = render_layout(self.layout, Context(time.time(), self.hub.snapshot()), geometry=g)
+            img.copy(0, 0, g.width, g.height).save(path)
 
     def edit_settings(self) -> None:
         d = QtWidgets.QDialog(self)
@@ -725,7 +802,7 @@ class MainWindow(QtWidgets.QMainWindow):
         sync = QtWidgets.QCheckBox("Set the keyboard clock on connect and after suspend")
         sync.setChecked(self.settings.auto_sync_time)
         hours = QtWidgets.QDoubleSpinBox(suffix=" h", minimum=0.25, maximum=168, value=self.settings.resync_hours)
-        limit = QtWidgets.QCheckBox(f"Thin out animations to {MAX_FRAMES} frames (Epomaker Hub's limit)")
+        limit = QtWidgets.QCheckBox("Thin out long animations to what Epomaker's software allows for the keyboard")
         limit.setChecked(self.settings.limit_frames)
         lc = self.settings.live_config
         fps = QtWidgets.QSpinBox(minimum=1, maximum=10, value=lc.fps)
@@ -734,6 +811,15 @@ class MainWindow(QtWidgets.QMainWindow):
         area.setToolTip("Flash used for the stream. More means fewer erases (less wear).")
         seg = QtWidgets.QSpinBox(minimum=30, maximum=3600, value=int(lc.segment_seconds), suffix=" s")
         seg.setToolTip("How often to start a fresh stream, which resets the screen's playback drift.")
+        from .models import MODELS  # noqa: PLC0415
+
+        device = QtWidgets.QComboBox()
+        device.addItem("The first one connected", "")
+        for m in MODELS:
+            device.addItem(m.name + ("" if m.verified else " (not yet verified)"), m.key)
+        device.setCurrentIndex(max(0, device.findData(self.settings.device)))
+        device.setToolTip("Which keyboard to use when several are connected.")
+        f.addRow("Keyboard", device)
         f.addRow(tray)
         f.addRow(sync)
         f.addRow("Set the clock again every", hours)
@@ -742,6 +828,21 @@ class MainWindow(QtWidgets.QMainWindow):
         f.addRow("Frames per second", fps)
         f.addRow("Flash area", area)
         f.addRow("New stream every", seg)
+        rc = self.settings.refresh_config
+        interval = QtWidgets.QSpinBox(minimum=10, maximum=86400, value=int(rc.interval_s), suffix=" s")
+        interval.setToolTip(
+            "RT100 Pro and other TFT keyboards: how often live mode redraws the picture. "
+            "Each change rewrites a picture bank in the keyboard's flash."
+        )
+        partial = QtWidgets.QCheckBox("Send only the changed part of the picture (experimental)")
+        partial.setChecked(rc.partial)
+        partial.setToolTip("Much faster, if the keyboard's firmware supports it; check with `epomakerctl lab partial`.")
+        sysinfo = QtWidgets.QCheckBox("Keep the keyboard's own system page up to date (CPU, RAM, disk)")
+        sysinfo.setChecked(self.settings.system_info)
+        f.addRow(QtWidgets.QLabel("<b>RT100 Pro and other TFT keyboards</b>"))
+        f.addRow("Redraw live widgets every", interval)
+        f.addRow(partial)
+        f.addRow(sysinfo)
         bb = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel
         )
@@ -750,6 +851,8 @@ class MainWindow(QtWidgets.QMainWindow):
         f.addRow(bb)
         if d.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
+        self.settings.device = device.currentData()
+        self.ctl.set_prefer(self.settings.device)
         self.settings.tray_on_close = tray.isChecked()
         self.settings.limit_frames = limit.isChecked()
         self.settings.auto_sync_time = sync.isChecked()
@@ -761,6 +864,11 @@ class MainWindow(QtWidgets.QMainWindow):
             lead_frames=lc.lead_frames,
             slowdown=lc.slowdown,
         )
+        self.settings.refresh_config = RefreshConfig(
+            interval_s=interval.value(), partial=partial.isChecked(), bank=rc.bank
+        )
+        self.settings.system_info = sysinfo.isChecked()
+        self.ctl.set_system_info(FirmwareSystemInfo() if self.settings.system_info else None)
         self.settings.save()
         self.ctl.auto_sync = self.settings.auto_sync_time
         self.ctl.resync_s = self.settings.resync_hours * 3600
@@ -770,9 +878,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def about(self) -> None:
         QtWidgets.QMessageBox.about(
             self,
-            "RT82 Screen",
-            f"<b>RT82 Screen {__version__}</b><br>The Epomaker RT82 keyboard screen on Linux, without a browser.<br><br>"
-            "Protocol research by guysoft/rt82display and wyattades/keyscreen.",
+            APP_NAME,
+            f"<b>{APP_NAME} {__version__}</b><br>Screens of Epomaker keyboards on Linux, without a browser.<br><br>"
+            "Protocol research by guysoft/rt82display, wyattades/keyscreen and ramarivera/epomaker-driver-linux.",
         )
 
     def show_window(self) -> None:
@@ -793,7 +901,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self._told_about_tray:
             self._told_about_tray = True
             self.tray.showMessage(
-                "RT82 Screen",
+                APP_NAME,
                 "Still running in the system tray. Change this in File → Settings.",
                 QtWidgets.QSystemTrayIcon.MessageIcon.Information,
                 3000,
@@ -825,7 +933,7 @@ def app_icon() -> QtGui.QIcon:
 
 def main() -> int:
     QtWidgets.QApplication.setApplicationName(APP_ID)
-    QtWidgets.QApplication.setApplicationDisplayName("RT82 Screen")
+    QtWidgets.QApplication.setApplicationDisplayName(APP_NAME)
     QtWidgets.QApplication.setDesktopFileName(APP_ID)
     app = QtWidgets.QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)

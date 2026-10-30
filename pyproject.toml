@@ -3,14 +3,14 @@ requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "rt82-plasma"
+name = "epomaker-screen"
 dynamic = ["version"]
-description = "Epomaker RT82 keyboard screen on Linux: clock sync, pictures and live widgets (KDE Plasma app and CLI)"
+description = "Screens of Epomaker keyboards on Linux (RT82, RT100 Pro, ...): clock sync, pictures and live widgets; KDE Plasma app and CLI"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.9"
-authors = [{ name = "rt82-plasma contributors" }]
-keywords = ["epomaker", "rt82", "keyboard", "lcd", "hid", "kde", "plasma"]
+authors = [{ name = "epomaker-screen contributors" }]
+keywords = ["epomaker", "rt82", "rt100", "keyboard", "lcd", "hid", "kde", "plasma"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: X11 Applications :: Qt",
@@ -30,23 +30,23 @@ pyside6 = ["PySide6>=6.4"]
 dev = ["pytest>=7", "ruff>=0.5"]
 
 [project.urls]
-Homepage = "https://github.com/Fasad1987/epomaker-rt82-plasma"
-Issues = "https://github.com/Fasad1987/epomaker-rt82-plasma/issues"
+Homepage = "https://github.com/Fasad1987/epomaker-screen"
+Issues = "https://github.com/Fasad1987/epomaker-screen/issues"
 
 [project.scripts]
-rt82ctl = "rt82.cli:main"
+epomakerctl = "epomaker_screen.cli:main"
 
 [project.gui-scripts]
-rt82-screen = "rt82.gui:main"
+epomaker-screen = "epomaker_screen.gui:main"
 
 [tool.setuptools.dynamic]
-version = { attr = "rt82.__version__" }
+version = { attr = "epomaker_screen.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-rt82 = ["resources/*.svg"]
+epomaker_screen = ["resources/*.svg"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src", "tests"]

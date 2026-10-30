@@ -15,9 +15,8 @@ import math
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from .protocol import HEIGHT, QGIF_HEIGHT, WIDTH
 from .qt import QtCore, QtGui
-from .render import FIT_MODES, canvas, draw_fitted
+from .render import FIT_MODES, RT82, Geometry, canvas, draw_fitted, to_rgb
 
 Qt = QtCore.Qt
 
@@ -464,17 +463,26 @@ DEFAULT_LAYOUT = {
 }
 
 
-def default_layout() -> dict:
-    return copy.deepcopy(DEFAULT_LAYOUT)
+def default_layout(geometry: Geometry = RT82) -> dict:
+    """The default layout, scaled from its 240x135 design to ``geometry``."""
+    layout = copy.deepcopy(DEFAULT_LAYOUT)
+    sx, sy = geometry.width / 240, geometry.height / 135
+    font = min(sx, sy)
+    for w in layout["widgets"]:
+        w["x"], w["w"] = round(w["x"] * sx), round(w["w"] * sx)
+        w["y"], w["h"] = round(w["y"] * sy), round(w["h"] * sy)
+        if "size" in w.get("props", {}):
+            w["props"]["size"] = max(6, round(w["props"]["size"] * font))
+    return layout
 
 
-def render_layout(layout: dict, ctx: Context, selected: int | None = None) -> QtGui.QImage:
-    img = canvas(layout.get("background", "#000000"))
+def render_layout(layout: dict, ctx: Context, selected: int | None = None, geometry: Geometry = RT82) -> QtGui.QImage:
+    img = canvas(geometry, layout.get("background", "#000000"))
     p = QtGui.QPainter(img)
     p.setRenderHint(QtGui.QPainter.RenderHint.TextAntialiasing)
     if layout.get("background_image"):
         bg = _image(layout["background_image"])
-        draw_fitted(p, bg, QtCore.QRectF(0, 0, WIDTH, HEIGHT), layout.get("background_mode", "cover"))
+        draw_fitted(p, bg, QtCore.QRectF(0, 0, geometry.width, geometry.height), layout.get("background_mode", "cover"))
     for i, w in enumerate(layout.get("widgets", [])):
         t = TYPES.get(w.get("type", ""))
         if t is None or w.get("hidden"):
@@ -491,15 +499,21 @@ def render_layout(layout: dict, ctx: Context, selected: int | None = None) -> Qt
             p.setPen(QtGui.QPen(QtGui.QColor("#ff00ff"), 1, Qt.PenStyle.DashLine))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawRect(r.adjusted(0, 0, -1, -1))
+    if geometry.rows > geometry.height:  # frame rows the panel does not show
+        p.fillRect(
+            0,
+            geometry.height,
+            geometry.width,
+            geometry.rows - geometry.height,
+            QtGui.QColor(layout.get("background", "#000000")),
+        )
     p.end()
-    if QGIF_HEIGHT > HEIGHT:  # hidden bottom row
-        q = QtGui.QPainter(img)
-        q.fillRect(0, HEIGHT, WIDTH, QGIF_HEIGHT - HEIGHT, QtGui.QColor(layout.get("background", "#000000")))
-        q.end()
     return img
 
 
-def renderer(get_layout: Callable[[], dict], snapshot: Callable[[], dict]) -> tuple[Callable[[float], bytes], bytes]:
+def renderer(
+    get_layout: Callable[[], dict], snapshot: Callable[[], dict], geometry: Geometry = RT82
+) -> tuple[Callable[[float], bytes], bytes]:
     """Live-mode render function, plus the fallback still.
 
     ``get_layout`` is called for every frame, so edits show up without
@@ -507,12 +521,12 @@ def renderer(get_layout: Callable[[], dict], snapshot: Callable[[], dict]) -> tu
     """
     import time
 
-    from .render import to_rgb
-
     def render(t: float) -> bytes:
-        return to_rgb(render_layout(get_layout(), Context(t, snapshot())))
+        return to_rgb(render_layout(get_layout(), Context(t, snapshot()), geometry=geometry), geometry)
 
-    fallback = to_rgb(render_layout(fallback_layout(get_layout()), Context(time.time(), {})))
+    fallback = to_rgb(
+        render_layout(fallback_layout(get_layout()), Context(time.time(), {}), geometry=geometry), geometry
+    )
     return render, fallback
 
 

@@ -1,11 +1,11 @@
 #!/bin/bash
-# Collects what is needed to debug the RT82 on this machine into one file.
-#   scripts/diagnose.sh   -> rt82-diagnose-<date>.txt in the current directory
+# Collects what is needed to debug an Epomaker keyboard on this machine into one file.
+#   scripts/diagnose.sh   -> epomaker-diagnose-<date>.txt in the current directory
 # Run as root (su -c 'scripts/diagnose.sh' or sudo) to include the initrd contents and the GRUB config.
 set -uo pipefail
 PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin"
 
-OUT="${1:-rt82-diagnose-$(date +%Y%m%d-%H%M%S).txt}"
+OUT="${1:-epomaker-diagnose-$(date +%Y%m%d-%H%M%S).txt}"
 KERNEL="$(uname -r)"
 
 section() { printf '\n===== %s =====\n' "$*"; }
@@ -20,24 +20,24 @@ run() { printf '$ %s\n' "$*"; "$@" 2>&1; }
 	echo "session: ${XDG_SESSION_TYPE:-?} ${XDG_CURRENT_DESKTOP:-}"
 
 	section "USB"
-	command -v lsusb >/dev/null && { run lsusb -d 36b0:; run lsusb -d 1919:; run lsusb -t; }
+	command -v lsusb >/dev/null && { run lsusb -d 36b0:; run lsusb -d 3151:; run lsusb -d 1919:; run lsusb -t; }
 	for d in /sys/bus/usb/devices/*; do
 		[ -r "$d/idVendor" ] || continue
-		case "$(cat "$d/idVendor")" in 36b0|1919) ;; *) continue ;; esac
+		case "$(cat "$d/idVendor")" in 36b0|3151|1919) ;; *) continue ;; esac
 		echo "$d: $(cat "$d/idVendor"):$(cat "$d/idProduct") $(cat "$d/manufacturer" 2>/dev/null) / $(cat "$d/product" 2>/dev/null) speed=$(cat "$d/speed" 2>/dev/null)"
 	done
 
 	section "hidraw"
 	for h in /sys/class/hidraw/hidraw*; do
 		id="$(grep -s HID_ID "$h/device/uevent")"
-		case "$id" in *000036B0*|*00001919*) ;; *) continue ;; esac
+		case "$id" in *000036B0*|*00003151*|*00001919*) ;; *) continue ;; esac
 		node="/dev/${h##*/}"
 		echo "$node $id $(grep -s HID_NAME "$h/device/uevent") iface=$(basename "$(dirname "$(readlink -f "$h/device")")")"
 		echo "   $(ls -l "$node")"
 		command -v getfacl >/dev/null && getfacl -p "$node" 2>/dev/null | grep -v '^#' | sed 's/^/   /'
 		echo "   descriptor: $(od -An -tx1 -N8 "$h/device/report_descriptor" | tr -s ' ')"
 	done
-	ls -l /etc/udev/rules.d/*rt82* 2>/dev/null || echo "RT82 udev rule not installed"
+	ls -l /etc/udev/rules.d/*epomaker* 2>/dev/null || echo "epomaker-screen udev rule not installed"
 
 	section "keyboard drivers (sysfs)"
 	for ev in /sys/class/input/input*; do
@@ -77,7 +77,7 @@ run() { printf '$ %s\n' "$*"; "$@" 2>&1; }
 	done
 
 	section "kernel log (USB/HID)"
-	dmesg 2>/dev/null | grep -iE '36b0|1919|rt82|epomaker|usbhid|hid-generic' | tail -40 || echo "(dmesg needs root)"
+	dmesg 2>/dev/null | grep -iE '36b0|3151|1919|epomaker|usbhid|hid-generic' | tail -40 || echo "(dmesg needs root)"
 } > "$OUT"
 
 echo "Saved to $OUT"

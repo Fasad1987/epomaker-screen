@@ -1,20 +1,18 @@
-"""High-level access to the RT82 keyboard and its screen controller."""
+"""RDM family: the keyboard (e.g. RT82, 36b0:30a3) and its screen controller (1919:1919)."""
 
 from __future__ import annotations
 
 import contextlib
 import datetime as dt
-import fcntl
-import os
 import time
 from collections.abc import Iterator
 from typing import Callable, Protocol
 
-from . import hidraw
+from ... import hid as hidraw
+from ..base import POWER_CYCLE_HINT, DeviceError, Log, ScreenFrozen
 from .protocol import (
     BLOCK,
     KEYBOARD_INTERFACE,
-    KEYBOARD_PID,
     KEYBOARD_REPORT,
     KEYBOARD_USAGE_PAGE,
     KEYBOARD_VID,
@@ -38,8 +36,6 @@ from .protocol import (
     time_digits,
 )
 
-Log = Callable[[str], None]
-
 # Erase timing measured on this controller (keyscreen): ~137 ms per 64 KiB block
 # holding data, ~56 ms per blank one. Erases over ~5 s made it drop off USB;
 # ones up to ~4 s never did.
@@ -49,18 +45,7 @@ ERASE_S_DATA, ERASE_S_BLANK, MAX_ERASE_S = 0.14, 0.06, 3.4
 DEFAULT_TIMEOUT = 2.0
 SLOW_COMMANDS = {Cmd.COMMIT_TABLE: 5.0, Cmd.INIT_LCD: 5.0, Cmd.WRITE_TABLE: 3.0, Cmd.SET_TIME: 3.0}
 
-POWER_CYCLE_HINT = (
-    "Power-cycle the keyboard: unplug the cable, switch the keyboard off with its power switch, "
-    "wait ~10 s, switch it on and plug it back in. Also close any Epomaker Hub browser tabs."
-)
-
-
-class DeviceError(RuntimeError):
-    pass
-
-
-class ScreenFrozen(DeviceError):
-    """The screen controller is on USB but does not answer: only a power cycle helps."""
+DEFAULT_PID = 0x30A3  # RT82
 
 
 class Transport(Protocol):
@@ -70,37 +55,12 @@ class Transport(Protocol):
     def close(self) -> None: ...
 
 
-def keyboard_present() -> bool:
-    return hidraw.present(KEYBOARD_VID, KEYBOARD_PID)
-
-
-def keyboard_id(sysfs: str = "/sys/bus/usb/devices") -> str | None:
-    """Identifies the current USB connection of the keyboard ("bus:devnum").
-
-    The device number changes on every re-plug or power cycle, even one too
-    quick for a presence poll to notice. None when it is not connected.
-    """
-    try:
-        names = os.listdir(sysfs)
-    except OSError:
-        return None
-    for name in sorted(names):
-        d = os.path.join(sysfs, name)
-        try:
-            with open(os.path.join(d, "idVendor")) as f:
-                vid = int(f.read(), 16)
-            with open(os.path.join(d, "idProduct")) as f:
-                pid = int(f.read(), 16)
-            if (vid, pid) != (KEYBOARD_VID, KEYBOARD_PID):
-                continue
-            with open(os.path.join(d, "busnum")) as f:
-                bus = f.read().strip()
-            with open(os.path.join(d, "devnum")) as f:
-                dev = f.read().strip()
-            return f"{bus}:{dev}"
-        except (OSError, ValueError):
-            continue
-    return None
+def _same_hub(screen_usb: str, keyboard_usb: str) -> bool:
+    """The screen controller sits on the keyboard's internal hub: 3-9.1 next to 3-9.3."""
+    if not keyboard_usb or not screen_usb:
+        return True
+    hub = keyboard_usb.rsplit(".", 1)[0] if "." in keyboard_usb else keyboard_usb
+    return screen_usb.startswith(hub + ".") and screen_usb != keyboard_usb
 
 
 def _echo(cmd: int) -> Callable[[bytes], bool]:
@@ -121,17 +81,18 @@ def erase_steps(used: int, budget: float = MAX_ERASE_S) -> list[int]:
 
 
 class Keyboard:
-    """Vendor interface of the keyboard (36b0:30a3, usage page 0xFF60)."""
+    """Vendor interface of the keyboard (e.g. 36b0:30a3, usage page 0xFF60)."""
 
     def __init__(self, transport: Transport, report_size: int = KEYBOARD_REPORT):
         self.t = transport
         self.report_size = report_size
 
     @classmethod
-    def open(cls) -> Keyboard:
-        info = hidraw.find(KEYBOARD_VID, KEYBOARD_PID, KEYBOARD_USAGE_PAGE, KEYBOARD_INTERFACE)
+    def open(cls, pid: int = DEFAULT_PID, usb_path: str = "") -> Keyboard:
+        devices = [d for d in hidraw.enumerate_hidraw() if not usb_path or d.usb_path == usb_path]
+        info = hidraw.find(KEYBOARD_VID, pid, KEYBOARD_USAGE_PAGE, KEYBOARD_INTERFACE, devices=devices)
         if info is None:
-            raise DeviceError("RT82 keyboard (36b0:30a3) not found. Is it connected with a USB cable?")
+            raise DeviceError(f"keyboard {KEYBOARD_VID:04x}:{pid:04x} not found. Is it connected with a USB cable?")
         size = info.out_size or KEYBOARD_REPORT
         return cls(hidraw.HidDevice(info, size), size)
 
@@ -171,12 +132,24 @@ class Screen:
     # -- connection ------------------------------------------------------
 
     @classmethod
-    def connect(cls, timeout: float = 15.0, log: Log = lambda m: None, probe: bool = True) -> Screen:
-        """Opens the controller, asking the keyboard to enumerate it first."""
+    def connect(
+        cls,
+        timeout: float = 15.0,
+        log: Log = lambda m: None,
+        probe: bool = True,
+        pid: int = DEFAULT_PID,
+        usb_path: str = "",
+    ) -> Screen:
+        """Opens the controller, asking the keyboard to enumerate it first.
+
+        ``usb_path`` is the keyboard's USB device; the controller is looked for
+        on the same internal hub, so two keyboards of this family can coexist.
+        """
         end = time.monotonic() + timeout
         last_error: Exception | None = None
         while time.monotonic() < end:
-            info = hidraw.find(SCREEN_VID, SCREEN_PID, SCREEN_USAGE_PAGE, SCREEN_INTERFACE)
+            devices = [d for d in hidraw.enumerate_hidraw() if _same_hub(d.usb_path, usb_path)]
+            info = hidraw.find(SCREEN_VID, SCREEN_PID, SCREEN_USAGE_PAGE, SCREEN_INTERFACE, devices=devices)
             if info is not None:
                 try:
                     dev = hidraw.HidDevice(info, info.out_size or SCREEN_REPORT)
@@ -196,7 +169,7 @@ class Screen:
                             raise
                     return screen
             else:
-                kb = Keyboard.open()
+                kb = Keyboard.open(pid, usb_path)
                 try:
                     kb.open_screen()
                 finally:
@@ -379,45 +352,3 @@ class Screen:
             self.recover()
             raise
         return slots
-
-
-# -- one host at a time ---------------------------------------------------
-
-
-def _lock_path() -> str:
-    runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/rt82-{os.getuid()}"
-    os.makedirs(runtime, mode=0o700, exist_ok=True)
-    return os.path.join(runtime, "rt82-screen.lock")
-
-
-@contextlib.contextmanager
-def exclusive(wait: float = 10.0) -> Iterator[None]:
-    """Serialises access to the screen between rt82 processes of this user.
-
-    The controller accepts only one host; two programs talking to it at once
-    can freeze it until a power cycle.
-    """
-    fd = os.open(_lock_path(), os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
-    try:
-        end = time.monotonic() + wait
-        while True:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                if time.monotonic() >= end:
-                    raise DeviceError("the screen is busy in another rt82 process (live mode?)") from None
-                time.sleep(0.1)
-        yield
-    finally:
-        os.close(fd)
-
-
-@contextlib.contextmanager
-def screen_session(log: Log = lambda m: None, wait: float = 10.0) -> Iterator[Screen]:
-    with exclusive(wait):
-        screen = Screen.connect(log=log)
-        try:
-            yield screen
-        finally:
-            screen.close()

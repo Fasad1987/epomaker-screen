@@ -1,0 +1,44 @@
+# Hardware testing
+
+Every model in `src/epomaker_screen/models.py` that is not marked `verified` needs a first run on a real
+keyboard. This page is the checklist; please report results in an issue (with `epomakerctl probe --identify`).
+
+## Safety
+
+- The TFT driver can only send identify, clock, system info, language and picture commands. It cannot reset,
+  erase or reflash a keyboard.
+- Close Epomaker Hub / the vendor app first: two programs talking to a keyboard at once can confuse it.
+- The RT82 family's screen controller can freeze until a power cycle if misused; the `lab` experiments refuse
+  that family.
+
+## RT100 Pro (and the rest of the TFT family)
+
+Connect the keyboard with a cable and run, in order:
+
+```bash
+epomakerctl list                 # the 3151:5002 keyboard, interface 2 with collections=FFFF:0002, access=yes
+epomakerctl probe --identify     # internal id 3152 = RT100 Pro; please paste the whole output into the issue
+epomakerctl sync-time            # does the keyboard clock show the right time?
+epomakerctl sysinfo              # do CPU/RAM values appear on the keyboard's system page?
+epomakerctl lab pattern          # colours, orientation and byte order (see below)
+epomakerctl lab banks            # what the five banks are and how the keyboard switches between them
+epomakerctl lab speed            # how fast pixel packets can go (asks after each run)
+epomakerctl lab partial          # whether a small rectangle updates only part of the picture
+epomakerctl lab animation        # four colours at 4 fps, looping
+epomakerctl upload some.gif      # a real animation
+```
+
+`lab pattern` draws colour bars (red, green, blue, yellow, cyan, magenta, white, black from left to right) on
+the top half, a white square in the top-left corner and a gradient below. If the colours are swapped, the image
+is rotated or mirrored, or it is noise, the pixel format in docs/protocols/tft.md is wrong for this model; say
+exactly what you see (a photo helps).
+
+Also check, and report:
+
+- After unplugging and replugging: are the pictures still there?
+- Which keys switch the screen to the picture page, the clock and the system page?
+- In `lab speed`: the fastest delay that still gives complete pictures.
+
+## RT82 family
+
+Verified on the RT82. For the QK108 and RT98: `epomakerctl list`, `sync-time`, then `upload` one picture.

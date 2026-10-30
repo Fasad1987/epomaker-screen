@@ -1,10 +1,10 @@
 import pytest
 
+from epomaker_screen.drivers.rdm import device
+from epomaker_screen.drivers.rdm.device import Screen
+from epomaker_screen.drivers.rdm.live import LiveConfig, LiveStreamer, erase_steps
+from epomaker_screen.drivers.rdm.protocol import QGIF_HEIGHT, WIDTH, Kb
 from fake_screen import Clock, FakeScreen
-from rt82 import device
-from rt82.device import Screen
-from rt82.live import LiveConfig, LiveStreamer, erase_steps
-from rt82.protocol import QGIF_HEIGHT, WIDTH, Kb
 
 BITS = 32
 

@@ -6,6 +6,30 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-30
+
+The project is now **Epomaker Screen**, for Epomaker keyboards in general.
+
+### Added
+- Driver architecture: one package per screen family under `drivers/`, a model catalog and device detection
+  that picks the driver for each connected keyboard.
+- TFT family driver (RT100 Pro, RT75, RT85, Glyph, RT100, HE65 Mag, Dynatab75X): identification by internal id,
+  stills into five banks, animations, clock, the keyboard's own system page, language toggle, partial updates
+  and refresh-based live mode. Only allow-listed commands can be sent. Not yet verified on hardware.
+- `epomakerctl probe` (read-only device report) and `epomakerctl lab` (experiments to verify and speed up the
+  TFT protocol on a real keyboard); `sysinfo`, `language`, `upload --bank`, `--device`.
+- The editor follows the connected keyboard's screen size, with a layout per size; settings for the preferred
+  keyboard, TFT live refresh and the system page.
+- Simulator of a TFT keyboard and tests checked against packet vectors recovered from Epomaker's software.
+- Docs: `docs/protocols/` (rdm, tft), `docs/hardware-testing.md`.
+
+### Changed
+- Package `epomaker_screen`, commands `epomakerctl` and `epomaker-screen`, settings in
+  `~/.config/epomaker-screen` (an RT82 layout and settings from 0.2 are carried over), udev rule
+  `70-epomaker-screen.rules`. The installer removes the old `rt82-plasma` installation.
+- The RDM driver finds the screen controller on its own keyboard's hub, so several keyboards can be connected.
+- The HID layer parses collections and feature reports and supports feature-report I/O.
+
 ## [0.2.0] - 2026-10-29
 
 ### Fixed

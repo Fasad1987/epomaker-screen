@@ -4,12 +4,12 @@ import time
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-qt = pytest.importorskip("rt82.qt")
+qt = pytest.importorskip("epomaker_screen.qt")
 
-from rt82 import qgif  # noqa: E402
-from rt82.protocol import QGIF_HEIGHT, WIDTH  # noqa: E402
-from rt82.render import to_rgb  # noqa: E402
-from rt82.widgets import TYPES, Context, default_layout, new_widget, render_layout, renderer  # noqa: E402
+from epomaker_screen.drivers.rdm import qgif  # noqa: E402
+from epomaker_screen.drivers.rdm.protocol import QGIF_HEIGHT, WIDTH  # noqa: E402
+from epomaker_screen.render import to_rgb  # noqa: E402
+from epomaker_screen.widgets import TYPES, Context, default_layout, new_widget, render_layout, renderer  # noqa: E402
 
 
 @pytest.fixture(scope="module", autouse=True)

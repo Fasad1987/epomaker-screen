@@ -317,3 +317,53 @@ class DataHub:
             return "timed out"
         except OSError as e:
             return str(e)
+
+
+class FirmwareSystemInfo:
+    """Values for keyboards whose firmware draws its own system page (TFT family)."""
+
+    def __init__(self):
+        self._cpu_prev: tuple[int, int] | None = None
+
+    def _cpu(self) -> int:
+        fields = [int(x) for x in _read("/proc/stat").split("\n", 1)[0].split()[1:]]
+        idle, total = fields[3] + (fields[4] if len(fields) > 4 else 0), sum(fields)
+        prev, self._cpu_prev = self._cpu_prev, (idle, total)
+        if not prev or total == prev[1]:
+            return 0
+        return round(100 * (1 - (idle - prev[0]) / (total - prev[1])))
+
+    def __call__(self):
+        from .drivers.base import SystemInfo  # noqa: PLC0415
+
+        info = SystemInfo()
+        try:
+            mem = {}
+            for line in _read("/proc/meminfo").splitlines():
+                k, v = line.split(":", 1)
+                mem[k] = int(v.split()[0]) * 1024
+            info.memory_total = mem["MemTotal"]
+            info.memory_used = mem["MemTotal"] - mem.get("MemAvailable", 0)
+        except (OSError, KeyError, ValueError):
+            pass
+        try:
+            st = os.statvfs("/")
+            info.disk_total, info.disk_free = st.f_blocks * st.f_frsize, st.f_bavail * st.f_frsize
+        except OSError:
+            pass
+        try:
+            info.cpu_percent = self._cpu()
+        except (OSError, ValueError, IndexError):
+            pass
+        t = SystemStats._temp()
+        info.cpu_temperature = round(t) if t is not None else None
+        try:
+            for line in _read("/proc/net/dev").splitlines()[2:]:
+                name, rest = line.split(":", 1)
+                if name.strip() != "lo":
+                    v = rest.split()
+                    info.net_down += int(v[0])
+                    info.net_up += int(v[8])
+        except (OSError, ValueError, IndexError):
+            pass
+        return info

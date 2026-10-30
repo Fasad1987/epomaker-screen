@@ -10,7 +10,7 @@ labels: bug
 
 **Log**
 
-<!-- The log from the RT82 Screen window, or the rt82ctl output. -->
+<!-- The log from the Epomaker Screen window, or the epomakerctl output. Add `epomakerctl probe --identify`. -->
 
 ```
 ```
@@ -24,4 +24,4 @@ labels: bug
 - Keyboard model and connection (cable / 2.4 GHz / Bluetooth):
 - Distribution and version:
 - Desktop (KDE Plasma version, X11/Wayland):
-- RT82 Screen version (`rt82ctl --version`):
+- epomaker-screen version (`epomakerctl --version`):

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Makes the RT82 (or any USB keyboard) usable at the disk-encryption password
+# Makes an Epomaker (or any USB) keyboard usable at the disk-encryption password
 # prompt, by putting its drivers into the initramfs and loading them early.
 #
 #   su -c 'scripts/boot-keyboard.sh'           show the plan, ask, apply, rebuild the initrd
@@ -68,8 +68,8 @@ live_modules() {
 command -v modinfo >/dev/null || { echo "modinfo is required (package kmod)" >&2; exit 1; }
 is_loadable() { modinfo -k "$KERNEL" -F filename "$1" 2>/dev/null | grep -qv '^(builtin)$\|^$'; }
 
-RT82_PRESENT=0
-grep -qsi '^PRODUCT=36b0/30a3' /sys/bus/usb/devices/*/uevent && RT82_PRESENT=1
+EPOMAKER_PRESENT=0
+grep -qsiE '^PRODUCT=(36b0|3151)/' /sys/bus/usb/devices/*/uevent && EPOMAKER_PRESENT=1
 
 BASE="usbhid hid_generic hid xhci_pci xhci_hcd ehci_pci ehci_hcd ohci_pci ohci_hcd uhci_hcd xhci_pci_renesas"
 LIVE="$(live_modules | tr '-' '_')"
@@ -162,7 +162,7 @@ apply_config() {
 			strip_block /etc/initrd.mk
 			{
 				echo "$MARK_BEGIN"
-				echo "# Keyboard drivers for the disk password prompt (epomaker-rt82-plasma scripts/boot-keyboard.sh)"
+				echo "# Keyboard drivers for the disk password prompt (epomaker-screen scripts/boot-keyboard.sh)"
 				echo "MODULES_TRY_ADD += $MODS"
 				[ -n "$PRELOAD" ] && echo "MODULES_PRELOAD += $PRELOAD"
 				echo "$MARK_END"
@@ -171,7 +171,7 @@ apply_config() {
 		dracut)
 			cat > /etc/dracut.conf.d/90-rt82-keyboard.conf <<-EOF
 				$MARK_BEGIN
-				# Keyboard drivers for the disk password prompt (epomaker-rt82-plasma scripts/boot-keyboard.sh)
+				# Keyboard drivers for the disk password prompt (epomaker-screen scripts/boot-keyboard.sh)
 				add_drivers+=" $MODS "
 				force_drivers+=" $PRELOAD "
 				$MARK_END
@@ -216,19 +216,19 @@ grub_advice() {
 		fi
 	done
 	echo "   If the keyboard does not type in GRUB:"
-	echo "    1. Connect the RT82 with a cable, directly to a port on the mainboard (USB 2.0 if there is one),"
+	echo "    1. Connect the keyboard with a cable, directly to a port on the mainboard (USB 2.0 if there is one),"
 	echo "       not through a hub or the front panel."
 	echo "    2. In the UEFI setup, turn off Fast Boot (it skips USB initialisation) and turn on"
 	echo "       USB Legacy Support / USB Keyboard Support and XHCI Hand-off."
 	echo "    3. Check that the keyboard types in the UEFI setup itself (Del/F2). If it does not, the firmware"
-	echo "       cannot handle this keyboard (the RT82 has a USB hub inside); use the 2.4 GHz dongle or"
+	echo "       cannot handle this keyboard (some, like the RT82, have a USB hub inside); use the 2.4 GHz dongle or"
 	echo "       another keyboard for this step."
 }
 
 # -- main -----------------------------------------------------------------------
 
-echo "Kernel: $KERNEL; initrd generator: ${GEN:-not found}; RT82 connected: $([ $RT82_PRESENT = 1 ] && echo yes || echo no)"
-[ "$RT82_PRESENT" = 1 ] || warn "connect the RT82 with a cable first, so that its exact drivers are found"
+echo "Kernel: $KERNEL; initrd generator: ${GEN:-not found}; Epomaker keyboard connected: $([ $EPOMAKER_PRESENT = 1 ] && echo yes || echo no)"
+[ "$EPOMAKER_PRESENT" = 1 ] || warn "connect the keyboard with a cable first, so that its exact drivers are found"
 echo "Keyboard modules: ${MODS:-(all built into the kernel)}"
 echo "Load early:       ${PRELOAD:--}"
 
@@ -257,7 +257,7 @@ case "$MODE" in
 			if apply_config; then
 				rebuild
 				check_image
-				say "Done. Reboot and try typing the disk password on the RT82."
+				say "Done. Reboot and try typing the disk password on the keyboard."
 				echo "   To undo: su -c '$0 --undo'"
 			fi
 		fi

@@ -3,10 +3,10 @@ import os
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-qt = pytest.importorskip("rt82.qt")
+qt = pytest.importorskip("epomaker_screen.qt")
 
-from rt82 import gui  # noqa: E402
-from rt82.widgets import TYPES  # noqa: E402
+from epomaker_screen import gui  # noqa: E402
+from epomaker_screen.widgets import TYPES  # noqa: E402
 
 
 @pytest.fixture
@@ -43,3 +43,18 @@ def test_editor_actions_do_not_crash(window):
     window.remove_widget()
     window.canvas.repaint()
     assert len(window.layout["widgets"]) > len(TYPES) - 1
+
+
+def test_editor_follows_the_connected_keyboards_screen(window):
+    from epomaker_screen.drivers.tft import TftDriver
+    from epomaker_screen.models import by_key
+
+    rt82_layout = window.layout
+    window._on_device(TftDriver(0x3151, 0x5002, "1-4", model=by_key("rt100pro")))
+    assert window.geometry.key == "240x240"
+    assert window.canvas.width() == 240 * window.canvas.scale + 2
+    assert window.layout is not rt82_layout and "RT100 Pro" in window.windowTitle()
+    assert max(w["y"] + w["h"] for w in window.layout["widgets"]) > 135  # default layout scaled to the square screen
+    window.canvas.repaint()
+    window._on_device(None)  # unplugged: keep editing the last screen
+    assert window.geometry.key == "240x240"

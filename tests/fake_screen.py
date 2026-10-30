@@ -12,7 +12,7 @@ modes seen on real hardware:
 
 from __future__ import annotations
 
-from rt82.protocol import BLOCK, MAGIC, QGIF_HEIGHT, WIDTH, Cmd
+from epomaker_screen.drivers.rdm.protocol import BLOCK, MAGIC, QGIF_HEIGHT, WIDTH, Cmd
 
 BITMAP = ((WIDTH // 4) * (QGIF_HEIGHT // 4) + 7) // 8
 TILES = (WIDTH // 4) * (QGIF_HEIGHT // 4)
@@ -34,7 +34,7 @@ class ProtocolViolation(AssertionError):
 
 
 class FakeScreen:
-    """Implements the Transport protocol used by rt82.device.Screen."""
+    """Implements the Transport protocol used by epomaker_screen.drivers.rdm.device.Screen."""
 
     def __init__(self, clock: Clock, blocks: int = 80, readahead: int = 3, slowdown: float = 1.0):
         self.clock = clock
@@ -111,7 +111,7 @@ class FakeScreen:
             r = self.replies.pop(0)
             if match(r):
                 return r
-        from rt82.hidraw import HidTimeout
+        from epomaker_screen.hid import HidTimeout
 
         raise HidTimeout("fake: no reply")
 
