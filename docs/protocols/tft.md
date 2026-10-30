@@ -133,6 +133,16 @@ writing flash. The driver waits up to about 10 s.
 - Are stills and the animation stored separately, and do they survive unplugging?
 - Where are pictures stored (flash wear for frequent live updates)?
 
+## Screen pages
+
+On the RT100 Pro **Fn + PgUp / PgDn** cycle the screen pages: the clock page, the system page, the animation and
+the five pictures. There is no known command to switch pages from the host.
+
+Once an animation is stored, the keyboard goes back to it by itself some time after you switch to another page,
+so the clock page shows only until then. Still open: is that the firmware's own idle timer, or does a host
+command (system info `22` every 2 s from the app, or clock `28`) make it redraw? Without an animation (after
+`reset-screen`) the clock page stays.
+
 ## Live widgets on TFT keyboards
 
 The firmware cannot be streamed to like the RT82's controller, and each update rewrites a picture bank. Live

@@ -39,7 +39,9 @@ exactly what you see (a photo helps).
 Also check, and report:
 
 - After unplugging and replugging: are the pictures still there?
-- Which keys switch the screen to the picture page, the clock and the system page?
+- Which keys switch the screen to the picture page, the clock and the system page? (RT100 Pro: Fn + PgUp/PgDn.)
+- With an animation stored: switch to the clock page with Epomaker Screen closed. Does the keyboard go back to the
+  animation, and after how long? Does `epomakerctl sysinfo` or `sync-time` make it switch at once?
 - In `lab speed`: the fastest delay that still gives complete pictures.
 - In `lab banks`: the timings it prints, and on which attempt each bank was accepted.
 

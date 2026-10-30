@@ -115,7 +115,7 @@ def main(a, session, log) -> int:
         bank = a.bank - 1
         log(f"{driver.name}: {w}x{h}, firmware {s.identify()['firmware']:#06x}")
         log(
-            "Switch the keyboard screen to the picture page first (see its manual; often Fn + a key next to the screen)."
+            "Switch the keyboard screen to the picture page first (RT100 Pro: Fn + PgUp / PgDn; other models: see the manual)."
         )
         log("Experiments overwrite the stored pictures and the animation (they share the screen memory).")
 
