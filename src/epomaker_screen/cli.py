@@ -319,7 +319,9 @@ This sends Epomaker's "erase screen flash" command (0xAC). What it does on this 
 is not known yet:
   - it may bring back the factory picture, or leave the picture page blank;
   - it may also erase graphics the firmware draws its clock and system pages with,
-    which only Epomaker's own software (Windows/macOS) could put back.
+    which only Epomaker's own software (Windows/macOS) could put back. On an RT100 Pro
+    those graphics seem to sit in the same memory as the pictures (an over-long
+    animation showed parts of the clock page), so this risk is real.
 Keys, lighting and the rest of the keyboard are not touched. Try the safe reset
 (without --erase) first."""
 

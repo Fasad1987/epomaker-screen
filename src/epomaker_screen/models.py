@@ -61,9 +61,12 @@ MODELS: tuple[Model, ...] = (
         3152,
         240,
         240,
-        memory_mib=7,
-        notes="memory size missing from the catalog; vendor default 7 MiB. Checked on firmware 0x0109: identify, "
-        "clock, system page, pixel format, upload speed",
+        # The catalog omits the memory size and the vendor app assumes 7 MiB (56 frames), but a
+        # 56-frame animation ran into other screens' data at the end of its loop. 6 MiB, as on
+        # the RT75, until `lab frames` measures it.
+        memory_mib=6,
+        notes="memory size missing from the catalog (vendor app assumes 7 MiB, too much); checked on firmware "
+        "0x0109: identify, clock, system page, pixel format, upload speed, animations",
     ),
     _tft("rt75", "Epomaker RT75", 0x5002, 3223, 240, 240),
     _tft("rt85", "Epomaker RT85", 0x5002, 2895, 320, 172),

@@ -19,7 +19,7 @@ def run(experiment: str, **kw):
         yield driver, s
 
     args = SimpleNamespace(
-        experiment=experiment, bank=kw.get("bank", 1), delays=kw.get("delays", "2,0"), pause=0.0, every=32
+        experiment=experiment, bank=kw.get("bank", 1), delays=kw.get("delays", "2,0"), pause=0.0, every=32, frames=6
     )
     logs = []
     assert lab.main(args, session, logs.append) == 0
@@ -34,13 +34,21 @@ def test_pattern_draws_bars_and_marker():
     assert any("bars" in m for m in logs)
 
 
-@pytest.mark.parametrize("experiment", ["speed", "partial", "animation", "banks", "flow"])
+@pytest.mark.parametrize("experiment", ["speed", "partial", "animation", "banks", "flow", "frames"])
 def test_experiments_run(experiment):
     fake, logs = run(experiment)
     assert logs
     if experiment == "banks":
         assert set(fake.banks) == {0, 1, 2, 3, 4}
+    if experiment == "frames":
+        assert len(fake.animation) == 6
     if experiment == "animation":
         assert len(fake.animation) == 4 and fake.delay == 250
     if experiment == "partial":
         assert fake.pixel(0, 120, 120) == (248, 0, 0) and fake.pixel(0, 0, 0) == (248, 252, 248)
+
+
+def test_numbered_frames_draw_the_number():
+    img = lab.numbered(240, 240, 7)
+    assert len(img) == 240 * 240 * 3
+    assert bytes([255, 255, 255]) in {img[i : i + 3] for i in range(0, len(img), 3)}

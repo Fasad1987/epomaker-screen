@@ -12,7 +12,10 @@ All notable changes to this project are documented here. The format follows
 - `upload --fit` works without a value (`contain`).
 - `lab flow` reads the keyboard's replies during a transfer.
 
+- RT100 Pro animations are limited to 47 frames: 56 (the vendor app's value) ran into other screens' data.
+
 ### Added
+- `lab frames` uploads numbered frames to measure how many fit and where the picture banks are.
 - `epomakerctl reset-screen` for TFT keyboards: black pictures in every bank, the clock set, the app's live mode and
   system page feed turned off. `--erase` sends the vendor's screen flash erase (`0xAC`) after typing `ERASE`.
 - TFT keyboards: a busy keyboard gets about 10 s to accept an upload instead of 2 s, and the error names the

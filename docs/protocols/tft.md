@@ -17,7 +17,7 @@ animation is still there after unplugging the cable. The rest is still open (bel
 
 | Model              | USB id      | Internal id | Screen  | Pixels | Animation frames |
 | ------------------ | ----------- | ----------- | ------- | ------ | ---------------- |
-| RT100 Pro          | `3151:5002` | 3152        | 240×240 | RGB565 | 56               |
+| RT100 Pro          | `3151:5002` | 3152        | 240×240 | RGB565 | 47 (vendor: 56, too many) |
 | RT75               | `3151:5002` | 3223        | 240×240 | RGB565 | 47               |
 | RT85               | `3151:5002` | 2895        | 320×172 | RGB565 | 51               |
 | Glyph              | `3151:5002` | 3059        | 428×142 | RGB565 | 46               |
@@ -101,12 +101,18 @@ is just a copy of the last packet received, with no progress or busy signal. So 
 frames of it; a still written to bank 1 after an animation left the animation showing only its first frame. So
 uploading pictures can damage the animation and the other way round.
 
+**The RT100 Pro holds fewer frames than the vendor app assumes.** Its catalog entry has no memory size, so the
+vendor app assumes 7 MiB, 56 frames. A 56-frame animation, at the end of each loop, showed parts of other screens,
+the clock page among them, before starting again. So the firmware's own graphics seem to share this memory too.
+The driver allows 47 frames (6 MiB, as on the RT75) until `lab frames` measures the real limit: it uploads
+numbered frames, then you note the last clean number and which numbers the picture pages show.
+
 After a picture the keyboard refuses the next prepare for 1–5 s (reply `a5 00 ...`), probably while it finishes
 writing flash. The driver waits up to about 10 s.
 
 ### Open questions (to settle on hardware)
 
-- How exactly do banks map onto animation frames (which frames show up as stills)?
+- How many frames fit, and how do banks map onto animation frames (`lab frames`)?
 - What does `AC` (erase screen flash) do: bring back the factory picture, blank the picture page, or also erase
   the firmware's own clock and system page graphics?
 - Does the keyboard switch to a bank when a picture is written to it, or only store it? (`lab banks`)

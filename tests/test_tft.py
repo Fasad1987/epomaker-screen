@@ -91,7 +91,7 @@ def test_changed_box():
 
 def test_frame_limits_follow_the_vendor_memory_formula():
     # Values documented by ramarivera/epomaker-driver-linux docs/display.md.
-    assert by_key("rt100pro").extra["max_frames"] == 56
+    assert by_key("rt100pro").extra["max_frames"] == 47
     assert by_key("rt75").extra["max_frames"] == 47
     assert by_key("rt85").extra["max_frames"] == 51
     assert by_key("glyph").extra["max_frames"] == 46

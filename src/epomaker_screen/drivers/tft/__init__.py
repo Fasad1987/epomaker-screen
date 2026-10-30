@@ -218,8 +218,10 @@ class TftSession:
         )
         return len(data)
 
-    def upload_animation(self, frames: list[bytes], fps: int, progress: Progress = lambda d, t: None) -> None:
-        maximum = self.model.extra["max_frames"]
+    def upload_animation(
+        self, frames: list[bytes], fps: int, progress: Progress = lambda d, t: None, maximum: int | None = None
+    ) -> None:
+        maximum = maximum or self.model.extra["max_frames"]
         if not 2 <= len(frames) <= maximum:
             raise ValueError(f"{self.model.name} animations take 2..{maximum} frames")
         rgb24 = self.model.extra["pixel_bytes"] == 3

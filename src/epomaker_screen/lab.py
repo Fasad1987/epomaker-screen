@@ -17,7 +17,7 @@ import time
 from .drivers.base import DeviceError
 from .drivers.tft import codec
 
-EXPERIMENTS = ("pattern", "speed", "partial", "animation", "banks", "flow")
+EXPERIMENTS = ("pattern", "speed", "partial", "animation", "banks", "flow", "frames")
 
 
 def add_parser(sub) -> argparse.ArgumentParser:
@@ -27,6 +27,7 @@ def add_parser(sub) -> argparse.ArgumentParser:
     p.add_argument("--delays", default="5,2,1,0", help="speed: milliseconds between pixel packets to try")
     p.add_argument("--pause", type=float, default=0.0, help="banks: seconds to wait between pictures")
     p.add_argument("--every", type=int, default=32, help="flow: read the keyboard's reply every N packets")
+    p.add_argument("--frames", type=int, default=56, help="frames: how many numbered frames to upload (2..255)")
     return p
 
 
@@ -63,6 +64,32 @@ def pattern(width: int, height: int, mark: int = 0) -> bytes:
         if x < 10 and mark and (y - height // 2) % 20 < 10 and (y - height // 2) // 20 < mark:
             return (255, 128, 0)  # one orange dot per run
         return (x * 255 // max(1, width - 1), y * 255 // max(1, height - 1), 128)
+
+    return _frame(width, height, paint)
+
+
+# 3x5 digits, one string of rows per digit.
+DIGITS = (
+    "111101101101111", "010110010010111", "111001111100111", "111001111001111", "101101111001001",
+    "111100111001111", "111100111101111", "111001010010010", "111101111101111", "111101111001111",
+)  # fmt: skip
+
+
+def numbered(width: int, height: int, n: int) -> bytes:
+    """A frame showing ``n`` in big digits on a background whose colour changes with ``n``."""
+    text = str(n)
+    scale = max(1, min(width // (4 * len(text) + 1), height // 7))
+    left = (width - (4 * len(text) - 1) * scale) // 2
+    top = (height - 5 * scale) // 2
+    background = ((n * 53) % 160 + 40, (n * 97) % 160 + 40, (n * 31) % 160 + 40)
+
+    def paint(x, y):
+        col, row = (x - left) // scale, (y - top) // scale
+        if 0 <= row < 5 and 0 <= col < 4 * len(text) and col % 4 < 3 and x >= left and y >= top:
+            digit = DIGITS[int(text[col // 4])]
+            if digit[row * 3 + col % 4] == "1":
+                return (255, 255, 255)
+        return background
 
     return _frame(width, height, paint)
 
@@ -181,6 +208,18 @@ def main(a, session, log) -> int:
             answer = _ask("What did you observe?")
             if answer:
                 log(f"reported: {answer}")
+        elif a.experiment == "frames":
+            count = max(2, min(255, a.frames))
+            log(f"uploading {count} numbered frames (1..{count}) at 4 fps; this takes a few minutes")
+            t0 = time.monotonic()
+            s.upload_animation([numbered(w, h, i + 1) for i in range(count)], 4, maximum=255)
+            log(f"done in {time.monotonic() - t0:.0f} s")
+            log("Watch a whole loop: note the last number that shows cleanly before anything else appears.")
+            log("Then look through the picture pages: which numbers (if any) does each show?")
+            answer = _ask("Last clean number, and what the picture pages show:")
+            if answer:
+                log(f"reported: {answer}")
+
         elif a.experiment == "flow":
             flow(s, w, h, bank, a, log)
     return 0
