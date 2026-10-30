@@ -124,7 +124,9 @@ class TftSession:
 
     # -- raw exchange ------------------------------------------------------
 
-    def send(self, pkt: bytes, delay: float = SEND_DELAY) -> None:
+    def send(self, pkt: bytes, delay: float = SEND_DELAY, allow_erase: bool = False) -> None:
+        if pkt[0] not in codec.ALLOWED and not (allow_erase and pkt[0] == codec.ERASE_SCREEN):
+            raise ValueError(f"command 0x{pkt[0]:02X} is not allowed by this driver")
         self.sleep(delay)
         try:
             self.t.set_feature(pkt)
@@ -238,6 +240,44 @@ class TftSession:
             raise ValueError(f"{self.model.name} stores up to {self.model.extra['banks']} still pictures")
         for bank, item in enumerate(items):
             self.upload_still(item.frames[0], bank, progress=progress)
+
+    def reset_screen(self, progress: Progress = lambda d, t: None) -> None:
+        """The safe reset: black stills in every bank (which also replaces the animation) and the clock set.
+
+        There is no readback, so the factory pictures cannot be saved or restored from the host.
+        """
+        black = bytes(self.caps.width * self.caps.height * 3)
+        banks = self.model.extra["banks"]
+        for bank in range(banks):
+            self.upload_still(black, bank, progress=lambda d, t, b=bank: progress(b * t + d, banks * t))
+        self.sync_time()
+
+    def erase_screen_flash(self, timeout: float = 120.0) -> bytes:
+        """Sends the vendor's "erase screen flash" command (0xAC) and waits for its reply.
+
+        Effect unverified: it may bring back the factory picture, or also erase graphics the
+        firmware draws its own pages with. Only call this after the user confirmed.
+        """
+        with self._lock:
+            self.send(codec.erase_screen(), SEND_DELAY, allow_erase=True)
+            start, reply = time.monotonic(), b""
+            polls = max(1, int(timeout / 0.5))
+            for _ in range(polls):
+                self.sleep(0.5)
+                try:
+                    reply = self.t.get_feature(0, codec.REPORT)
+                except OSError as e:
+                    raise DeviceError(f"reply to 0xAC: {e}") from e
+                if reply.startswith(codec.ERASED):
+                    self.log(f"screen flash erased in {time.monotonic() - start:.1f} s")
+                    break
+            else:
+                raise DeviceError(
+                    f"no 'erased' reply within {timeout:.0f} s (last reply {reply[:8].hex(' ') or 'empty'})"
+                )
+        self.sleep(1.0)
+        self.sync_time()
+        return reply
 
     def live(self, render, fallback: bytes, config: RefreshConfig) -> _Refresh:
         return _Refresh(self, render, config, self.log)

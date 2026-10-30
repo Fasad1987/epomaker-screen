@@ -90,6 +90,7 @@ def main(a, session, log) -> int:
         log(
             "Switch the keyboard screen to the picture page first (see its manual; often Fn + a key next to the screen)."
         )
+        log("Experiments overwrite the stored pictures and the animation (they share the screen memory).")
 
         if a.experiment == "pattern":
             t0 = time.monotonic()

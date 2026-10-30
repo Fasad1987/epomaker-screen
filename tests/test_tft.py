@@ -55,6 +55,27 @@ def test_dangerous_commands_cannot_be_built():
             codec.packet([cmd])
 
 
+def test_the_erase_command_needs_an_explicit_opt_in():
+    fake = FakeTft()
+    s = session(fake)
+    with pytest.raises(ValueError):
+        s.send(codec.erase_screen())
+    assert fake.sent == []
+    s.erase_screen_flash()
+    assert fake.erased == 1 and fake.sent[0][:8].hex() == "ac00000000000053"
+    assert fake.clock is not None
+
+
+def test_safe_reset_blacks_out_every_bank_and_sets_the_clock():
+    fake = FakeTft()
+    s = session(fake)
+    s.upload_still(frame(lambda x, y: (255, 255, 255)), 2)
+    s.reset_screen()
+    assert set(fake.banks) == {0, 1, 2, 3, 4}
+    assert all(fake.pixel(b, 120, 120) == (0, 0, 0) for b in range(5))
+    assert fake.clock is not None and fake.erased == 0
+
+
 def test_changed_box():
     a = frame(lambda x, y: (0, 0, 0), 10, 8)
     b = bytearray(a)

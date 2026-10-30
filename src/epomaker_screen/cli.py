@@ -314,6 +314,47 @@ def cmd_language(a) -> int:
     return 0
 
 
+ERASE_WARNING = """\
+This sends Epomaker's "erase screen flash" command (0xAC). What it does on this keyboard
+is not known yet:
+  - it may bring back the factory picture, or leave the picture page blank;
+  - it may also erase graphics the firmware draws its clock and system pages with,
+    which only Epomaker's own software (Windows/macOS) could put back.
+Keys, lighting and the rest of the keyboard are not touched. Try the safe reset
+(without --erase) first."""
+
+
+def cmd_reset_screen(a) -> int:
+    from .config import Settings
+
+    with _session(a) as (driver, s):
+        if driver.family != "tft":
+            raise DeviceError(f"{driver.name}: reset-screen is for TFT-family keyboards (RT100 Pro, RT75, ...)")
+        if a.erase:
+            print(ERASE_WARNING)
+            if not a.yes_erase_screen_flash:
+                if not sys.stdin.isatty():
+                    raise DeviceError(
+                        "--erase needs confirmation: run it in a terminal or pass --yes-erase-screen-flash"
+                    )
+                if input("Type ERASE to continue: ").strip() != "ERASE":
+                    log("cancelled, nothing sent")
+                    return 1
+            reply = s.erase_screen_flash()
+            log(f"erase done (reply {reply[:8].hex(' ')}), clock set. Check the picture, clock and system pages.")
+        else:
+            log("writing black pictures into every bank (this also replaces the animation) ...")
+            s.reset_screen(progress=_progress())
+            print()
+            log("pictures cleared, clock set")
+    settings = Settings.load()
+    if settings.live or settings.system_info:
+        settings.live, settings.system_info = False, False
+        settings.save()
+        log("turned off live mode and the system page feed in the app's settings (restart Epomaker Screen if running)")
+    return 0
+
+
 def cmd_watch(a) -> int:
     from .config import Settings
     from .service import Controller
@@ -379,6 +420,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--watch", action="store_true", help="keep sending every 2 s")
     p.set_defaults(fn=cmd_sysinfo)
     sub.add_parser("language", help="TFT keyboards: toggle the screen language").set_defaults(fn=cmd_language)
+    p = sub.add_parser(
+        "reset-screen", help="TFT keyboards: clear pictures and animation, set the clock, stop the app's feeds"
+    )
+    p.add_argument("--erase", action="store_true", help="instead send the vendor's screen flash erase (asks first)")
+    p.add_argument("--yes-erase-screen-flash", action="store_true", help=argparse.SUPPRESS)
+    p.set_defaults(fn=cmd_reset_screen)
     for name, fn, hlp in (
         ("layout", cmd_layout, "render the widget layout once and upload it as a picture"),
         ("live", cmd_live, "live mode: widgets update continuously (Ctrl+C to stop)"),

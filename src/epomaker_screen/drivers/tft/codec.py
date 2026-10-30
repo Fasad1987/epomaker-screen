@@ -32,6 +32,11 @@ CLOCK = 0x28
 # cannot reconfigure or brick a keyboard.
 ALLOWED = frozenset({IDENTIFY, SYSTEM_INFO, PREPARE_565, DATA_565, PREPARE_888, DATA_888, LANGUAGE, CLOCK})
 
+# Erasing the screen flash is outside ALLOWED: only erase_screen() builds it, and only
+# `epomakerctl reset-screen --erase` sends it, after the user confirms.
+ERASE_SCREEN = 0xAC
+ERASED = bytes.fromhex("acaaaa5555")  # reply prefix once the erase is done (vendor app)
+
 GIB = 1024**3
 
 
@@ -47,6 +52,13 @@ def packet(header: bytes | list[int], payload: bytes = b"", checksum_at: int = 7
     if len(payload) > REPORT - 8:
         raise ValueError("payload too long")
     p[8 : 8 + len(payload)] = payload
+    return bytes(p)
+
+
+def erase_screen() -> bytes:
+    p = bytearray(REPORT)
+    p[0] = ERASE_SCREEN
+    p[7] = 255 - ERASE_SCREEN
     return bytes(p)
 
 
