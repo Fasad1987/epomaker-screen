@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- `reset-screen --erase` (`0xAC`) is verified on the RT100 Pro: it removes every stored picture and the animation
+  and keeps the clock and system pages. Its warning is now model-specific; other models keep the full warning.
+
 ### Security
 - `scripts/diagnose.sh` no longer copies GRUB password lines (including `password_pbkdf2` hashes) into the
   report people attach to issues.

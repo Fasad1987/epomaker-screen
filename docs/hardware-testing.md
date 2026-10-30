@@ -47,6 +47,9 @@ Also check, and report:
 
 ### Results so far
 
+`reset-screen --erase` (`AC`) on the RT100 Pro removed all pictures and the animation in 0.5 s and kept the clock
+and system pages. On other models, please report what it does.
+
 RT100 Pro, firmware 0x0109: identify, clock, system page and `lab pattern` work; `lab speed` gave complete
 pictures down to no delay (0.77 s per picture), but with no delay pictures in a row and a long animation came out
 corrupted. A 56-frame GIF came out right at 2 ms and at 1 ms, now the default. Stills and the animation share

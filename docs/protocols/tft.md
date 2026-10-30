@@ -55,7 +55,7 @@ flash erase (`AC`), key-map or firmware-update commands.
 | `A5` | prepare RGB565 | see below; a write that authorises an upload, not a query                                                 |
 | `25` | pixels RGB565  | see below                                                                                                 |
 | `A9`/`29` | RGB888 variants | same layout, three bytes per pixel (Dynatab75X)                                                   |
-| `AC` | erase screen flash | vendor app expects reply prefix `AC AA AA 55 55`; effect unverified, sent only by `reset-screen --erase` |
+| `AC` | erase screen flash | reply `AC AA AA 55 55` when done; removes pictures and animation (RT100 Pro), sent only by `reset-screen --erase` |
 
 ### Pictures
 
@@ -122,8 +122,6 @@ writing flash. The driver waits up to about 10 s.
 
 ### Open questions (to settle on hardware)
 
-- What does `AC` (erase screen flash) do: bring back the factory picture, blank the picture page, or also erase
-  the firmware's own clock and system page graphics?
 - Does the keyboard switch to a bank when a picture is written to it, or only store it? (`lab banks`)
 - A prepare with a smaller box **replaces** the picture: an RT100 Pro (0x0109) showed the box on black (one earlier
   run showed no change, probably on another screen page). So boxes cannot patch a picture, only make smaller ones.
@@ -132,6 +130,13 @@ writing flash. The driver waits up to about 10 s.
   from flash to the panel slower than one refresh. Full-screen colour changes show it most.
 - Are stills and the animation stored separately, and do they survive unplugging?
 - Where are pictures stored (flash wear for frequent live updates)?
+
+### Erasing the screen flash (`AC`)
+
+On an RT100 Pro (firmware 0x0109) `AC` answered `ac aa aa 55 55` after 0.5 s and removed every stored picture
+and the animation: only the clock and system pages remained, both intact, as on a new keyboard. So the firmware's
+own page graphics are not in the erased area, although frames past the memory limit read them (see the memory
+map). epomaker-controller describes the same on the RT100 ("resets the image, does not affect telemetry").
 
 ## Screen pages
 

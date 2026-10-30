@@ -335,6 +335,11 @@ is not known yet:
 Keys, lighting and the rest of the keyboard are not touched. Try the safe reset
 (without --erase) first."""
 
+ERASE_VERIFIED = """\
+This sends Epomaker's "erase screen flash" command (0xAC). On the {name} (firmware 0x0109)
+it removed every stored picture and the animation, and kept the clock and system pages.
+Keys, lighting and the rest of the keyboard are not touched."""
+
 
 def cmd_reset_screen(a) -> int:
     from .config import Settings
@@ -343,7 +348,7 @@ def cmd_reset_screen(a) -> int:
         if driver.family != "tft":
             raise DeviceError(f"{driver.name}: reset-screen is for TFT-family keyboards (RT100 Pro, RT75, ...)")
         if a.erase:
-            print(ERASE_WARNING)
+            print(ERASE_VERIFIED.format(name=driver.name) if driver.model.extra["erase_verified"] else ERASE_WARNING)
             if not a.yes_erase_screen_flash:
                 if not sys.stdin.isatty():
                     raise DeviceError(
@@ -353,7 +358,9 @@ def cmd_reset_screen(a) -> int:
                     log("cancelled, nothing sent")
                     return 1
             reply = s.erase_screen_flash()
-            log(f"erase done (reply {reply[:8].hex(' ')}), clock set. Check the picture, clock and system pages.")
+            log(f"erase done (reply {reply[:8].hex(' ')}), clock set")
+            if not driver.model.extra["erase_verified"]:
+                log("Check the picture, clock and system pages, and please report what you see (epomakerctl probe).")
         else:
             log("writing a black animation and black pictures into every bank ...")
             s.reset_screen(progress=_progress())

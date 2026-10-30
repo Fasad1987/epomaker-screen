@@ -116,15 +116,16 @@ epomakerctl layout                     # render the layout once and upload it
 epomakerctl live                       # live mode in the terminal (Ctrl+C to stop)
 epomakerctl watch                      # background clock sync (what the systemd service runs)
 epomakerctl reset-screen               # TFT keyboards: clear pictures and animation, set the clock, stop feeds
-epomakerctl reset-screen --erase       # TFT keyboards: the vendor's screen flash erase (asks first; see below)
+epomakerctl reset-screen --erase       # TFT keyboards: remove all pictures and the animation (asks first)
 epomakerctl lab pattern                # TFT keyboards: protocol experiments, see docs/hardware-testing.md
 ```
 
 There is no command to read pictures back, so the factory picture cannot be saved first. `reset-screen` writes
 a black animation and black pictures into every bank, sets the clock and turns off the app's live mode and system page feed.
-`reset-screen --erase` sends Epomaker's "erase screen flash" command after you type `ERASE`; its effect is not
-verified yet: it may bring back the factory picture, leave the picture page blank, or also erase the graphics of
-the keyboard's clock and system pages, which only Epomaker's own software could put back. Everything on the
+`reset-screen --erase` sends Epomaker's "erase screen flash" command after you type `ERASE`. On the RT100 Pro
+(firmware 0x0109) it removes every stored picture and the animation, so only the keyboard's own pages (clock,
+system) are left, as on a new keyboard; it takes half a second. On other models its effect is not verified yet: it
+might also erase the graphics of the clock and system pages, which only Epomaker's own software could put back. Everything on the
 computer side is removed by `scripts/uninstall.sh`.
 
 With several keyboards connected, pick one with `--device rt100pro` (model key), `--device 3151:5002` (USB id) or
