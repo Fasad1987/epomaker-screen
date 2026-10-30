@@ -10,7 +10,8 @@ vectors in that project's tests.
 
 **Status:** checked on an **RT100 Pro, firmware 0x0109**: identification, the clock, the system page, the pixel
 format (`lab pattern`), pixel packets with no delay (`lab speed`) and animations (`lab animation`) work, and an
-animation is still there after unplugging the cable. The rest is still open (below);
+animation is still there after unplugging the cable. Black banks and a 47-frame GIF looping cleanly after
+`reset-screen` confirmed the memory map below; the RT100 Pro is marked verified. The rest is still open (below);
 `epomakerctl lab` runs the experiments that settle it (see [hardware testing](../hardware-testing.md)).
 
 ## Devices

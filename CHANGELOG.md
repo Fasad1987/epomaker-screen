@@ -16,6 +16,7 @@ All notable changes to this project are documented here. The format follows
   banks right after frame 47 (the vendor app assumes 7 MiB and 56 frames, which overwrites the banks).
 
 ### Added
+- The RT100 Pro is verified on hardware (firmware 0x0109).
 - `lab frames` uploads numbered frames to measure how many fit and where the picture banks are.
 - `epomakerctl reset-screen` for TFT keyboards: a black animation and black pictures in every bank, the clock set, the app's live mode and
   system page feed turned off. `--erase` sends the vendor's screen flash erase (`0xAC`) after typing `ERASE`.

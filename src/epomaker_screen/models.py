@@ -65,7 +65,8 @@ MODELS: tuple[Model, ...] = (
         # measured 6 MiB: frames 48-52 are the five picture banks, frames past 53 read other data.
         memory_mib=6,
         notes="6 MiB measured (the vendor app assumes 7 MiB, too much); checked on firmware "
-        "0x0109: identify, clock, system page, pixel format, upload speed, animations",
+        "0x0109: identify, clock, system page, stills in all banks, 47-frame animations, reset-screen",
+        verified=True,
     ),
     _tft("rt75", "Epomaker RT75", 0x5002, 3223, 240, 240),
     _tft("rt85", "Epomaker RT85", 0x5002, 2895, 320, 172),
