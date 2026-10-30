@@ -18,7 +18,7 @@ def run(experiment: str, **kw):
     def session(a):
         yield driver, s
 
-    args = SimpleNamespace(experiment=experiment, bank=kw.get("bank", 1), delays=kw.get("delays", "2,0"))
+    args = SimpleNamespace(experiment=experiment, bank=kw.get("bank", 1), delays=kw.get("delays", "2,0"), pause=0.0)
     logs = []
     assert lab.main(args, session, logs.append) == 0
     return fake, logs

@@ -31,10 +31,16 @@ from . import codec
 COMMAND_PAGE, COMMAND_USAGE = 0xFFFF, 0x0002  # vendor command collection (feature report 0, 64 bytes)
 
 # Vendor timings (desktop app): 10 ms before a command, 10 ms before reading its
-# reply, 100 ms before reading a prepare reply, 2 ms between pixel packets.
+# reply, 100 ms before reading a prepare reply.
 SEND_DELAY, READ_DELAY, PREPARE_READ_DELAY = 0.01, 0.01, 0.1
-CHUNK_DELAY = 0.002
-PREPARE_RETRIES = 10
+# The vendor app waits 2 ms between pixel packets. Each feature report is a USB
+# control transfer the keyboard acknowledges, and an RT100 Pro (firmware 0x0109)
+# took full pictures with no extra delay, 6.6 times faster (lab speed).
+CHUNK_DELAY = 0.0
+# The vendor app gives up on a prepare after ten retries (about 2 s). An RT100 Pro
+# refused that long right after two full pictures in a row, so keep asking longer.
+PREPARE_RETRY_DELAY = 0.1
+PREPARE_ATTEMPTS = 48  # about 10 s at 210 ms per attempt
 
 
 class Transport(Protocol):
@@ -60,7 +66,7 @@ class RefreshConfig:
     """Live mode for TFT keyboards: each update rewrites a picture bank."""
 
     interval_s: float = 60.0  # how often to re-render and send changes
-    partial: bool = False  # send only the changed rectangle (experimental: firmware support unverified)
+    partial: bool = False  # send only the changed rectangle (no effect on an RT100 Pro, firmware 0x0109)
     bank: int = 0
 
 
@@ -109,6 +115,7 @@ class TftSession:
         self.log = log
         self.sleep = sleep
         self.chunk_delay = CHUNK_DELAY
+        self.last_prepare: dict = {}
         self.caps = capabilities(model)
         self._lock = threading.RLock()
 
@@ -158,15 +165,29 @@ class TftSession:
     def info(self) -> dict:
         return {**self.identify(), "width": self.caps.width, "height": self.caps.height}
 
+    def _prepare(self, prepare: bytes) -> None:
+        """Sends a prepare until the keyboard accepts it; records how long that took."""
+        start, reply = time.monotonic(), b""
+        for attempts in range(1, PREPARE_ATTEMPTS + 1):
+            if attempts > 1:
+                self.sleep(PREPARE_RETRY_DELAY)
+            reply = self.exchange(prepare, PREPARE_READ_DELAY)
+            if len(reply) >= 2 and reply[0] == prepare[0] and reply[1] == 1:
+                break
+        else:
+            attempts = PREPARE_ATTEMPTS + 1
+        self.last_prepare = {"attempts": attempts, "seconds": time.monotonic() - start, "reply": reply[:8].hex(" ")}
+        if attempts > PREPARE_ATTEMPTS:
+            raise DeviceError(
+                f"the keyboard did not accept the picture upload ({PREPARE_ATTEMPTS} attempts in "
+                f"{self.last_prepare['seconds']:.1f} s, last reply {self.last_prepare['reply'] or 'empty'})"
+            )
+        if attempts > 1:
+            self.log(f"keyboard accepted the upload after {attempts} attempts ({self.last_prepare['seconds']:.1f} s)")
+
     def _transfer(self, prepare: bytes, packets: list[bytes], progress: Progress) -> None:
         with self._lock:
-            for _attempt in range(PREPARE_RETRIES + 1):
-                reply = self.exchange(prepare, PREPARE_READ_DELAY)
-                if len(reply) >= 2 and reply[0] == prepare[0] and reply[1] == 1:
-                    break
-                self.sleep(0.1)
-            else:
-                raise DeviceError("the keyboard did not accept the picture upload")
+            self._prepare(prepare)
             self.sleep(0.1)
             total = len(packets)
             for i, p in enumerate(packets):

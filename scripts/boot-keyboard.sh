@@ -129,7 +129,7 @@ check_image() {
 		return
 	fi
 	for m in $MODS; do
-		echo "$listing" | grep -Eq "/(${m}|${m//_/-})\.ko" || missing="$missing $m"
+		grep -Eq "/(${m}|${m//_/-})\.ko" <<<"$listing" || missing="$missing $m"
 	done
 	if [ -n "$missing" ]; then
 		warn "$img lacks the modules:$missing"
@@ -210,7 +210,7 @@ grub_advice() {
 		val="$(sed -n 's/^GRUB_TERMINAL_INPUT=//p' "$f" | tr -d '"'"'")"
 		if [ -n "$val" ]; then
 			echo "   $f: GRUB_TERMINAL_INPUT=$val"
-			if [ "$efi" = 1 ] && echo "$val" | grep -Eq 'usb_keyboard|at_keyboard'; then
+			if [ "$efi" = 1 ] && grep -Eq 'usb_keyboard|at_keyboard' <<<"$val"; then
 				warn "on UEFI use GRUB_TERMINAL_INPUT=\"console\" (input through the firmware), then run update-grub or grub2-mkconfig -o <path to grub.cfg>"
 			fi
 		fi

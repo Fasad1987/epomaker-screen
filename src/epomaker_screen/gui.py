@@ -836,7 +836,10 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         partial = QtWidgets.QCheckBox("Send only the changed part of the picture (experimental)")
         partial.setChecked(rc.partial)
-        partial.setToolTip("Much faster, if the keyboard's firmware supports it; check with `epomakerctl lab partial`.")
+        partial.setToolTip(
+            "Faster, if the keyboard's firmware supports it (an RT100 Pro with firmware 0x0109 ignores it); "
+            "check with `epomakerctl lab partial`."
+        )
         sysinfo = QtWidgets.QCheckBox("Keep the keyboard's own system page up to date (CPU, RAM, disk)")
         sysinfo.setChecked(self.settings.system_info)
         f.addRow(QtWidgets.QLabel("<b>RT100 Pro and other TFT keyboards</b>"))

@@ -8,9 +8,9 @@ macOS software (version 3.2.22) by [ramarivera/epomaker-driver-linux](https://gi
 (see its `docs/glyph-protocol.md` and `docs/display.md`); this project's codec is checked against the packet
 vectors in that project's tests.
 
-**Status:** no keyboard of this family has been tried with this project yet. Items marked *unverified* need a
-real keyboard; `epomakerctl lab` runs the experiments that settle them (see
-[hardware testing](../hardware-testing.md)).
+**Status:** checked on an **RT100 Pro, firmware 0x0109**: identification, the clock, the system page, the pixel
+format (`lab pattern`) and pixel packets with no delay (`lab speed`) work. The rest is still open (below);
+`epomakerctl lab` runs the experiments that settle it (see [hardware testing](../hardware-testing.md)).
 
 ## Devices
 
@@ -57,7 +57,9 @@ flash erase (`AC`), key-map or firmware-update commands.
 ### Pictures
 
 **Prepare** (`A5`), then read the reply; the keyboard is ready when reply byte 1 is `1`. The vendor software waits
-100 ms before reading and retries up to ten times.
+100 ms before reading and retries up to ten times (about 2 s). An RT100 Pro refused a third prepare for that long
+right after two full pictures in a row, so the driver keeps asking for about 10 s and reports the attempts and the
+last reply.
 
 | Offset | Meaning                                                                    |
 | ------ | -------------------------------------------------------------------------- |
@@ -71,19 +73,29 @@ flash erase (`AC`), key-map or firmware-update commands.
 
 **Pixels** (`25`), 56 bytes per packet: `[1]` bank or frame index, `[2]` frames, `[3]` delay, `[4:6]` packet index
 (u16 LE, restarting at 0 for each animation frame), `[6]` bytes in this packet. The vendor desktop app waits
-2 ms between packets.
+2 ms between packets; the driver sends them back to back (each is an acknowledged USB control transfer).
 
 Pixels are RGB565 **big-endian**, ordered **column by column** (x outer, y inner): for a 2×2 image red, green /
 blue, white the bytes are `F8 00 00 1F 07 E0 FF FF`.
 
-A full RT100 Pro picture is 115,200 bytes in 2,058 packets. At the vendor's 2 ms spacing that is at least ~4 s.
+A full RT100 Pro picture is 115,200 bytes in 2,058 packets. Measured on an RT100 Pro (firmware 0x0109), all
+pictures complete:
+
+| Delay between packets | Full picture | Throughput |
+| --------------------- | ------------ | ---------- |
+| 5 ms                  | 12.29 s      | 9 KiB/s    |
+| 2 ms (vendor)         | 5.28 s       | 21 KiB/s   |
+| 1 ms                  | 2.84 s       | 40 KiB/s   |
+| none                  | 0.77 s       | 146 KiB/s  |
 
 ### Open questions (to settle on hardware)
 
+- Why did the third still in a row get refused (`lab banks`, now with timings and `--pause`)? Likely the keyboard
+  is still writing the previous picture to flash.
 - Does the keyboard switch to a bank when a picture is written to it, or only store it? (`lab banks`)
-- Does a prepare with a smaller rectangle update just that part of the stored picture (fast live widgets),
-  or replace the picture? (`lab partial`)
-- How fast can pixel packets go before pictures break? (`lab speed`)
+- A prepare with a quarter-size box was accepted, but the picture did not change (RT100 Pro 0x0109). `lab partial`
+  now also tries a full-height strip (one contiguous run of column-major bytes) and asks to switch pages, to tell
+  "ignored" from "drawn only on redraw".
 - Are stills and the animation stored separately, and do they survive unplugging?
 - Where are pictures stored (flash wear for frequent live updates)?
 
@@ -91,7 +103,8 @@ A full RT100 Pro picture is 115,200 bytes in 2,058 packets. At the vendor's 2 ms
 
 The firmware cannot be streamed to like the RT82's controller, and each update rewrites a picture bank. Live
 mode therefore redraws the layout every `interval_s` (60 s by default, aligned to the minute) and only sends a
-picture when it changed. With `partial` on it sends only the changed rectangle, if the firmware supports it.
+picture when it changed (under a second on an RT100 Pro). With `partial` on it sends only the changed rectangle;
+this had no effect on an RT100 Pro with firmware 0x0109.
 
 The firmware draws a clock and a system page itself: Epomaker Screen sets the clock on connect and after suspend and
 sends system values every 2 s, which costs nothing in flash.

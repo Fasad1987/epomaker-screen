@@ -22,8 +22,9 @@ epomakerctl sync-time            # does the keyboard clock show the right time?
 epomakerctl sysinfo              # do CPU/RAM values appear on the keyboard's system page?
 epomakerctl lab pattern          # colours, orientation and byte order (see below)
 epomakerctl lab banks            # what the five banks are and how the keyboard switches between them
+epomakerctl lab banks --pause 3  # the same with a pause between pictures, if some bank failed
 epomakerctl lab speed            # how fast pixel packets can go (asks after each run)
-epomakerctl lab partial          # whether a small rectangle updates only part of the picture
+epomakerctl lab partial          # whether a strip or a small box updates only part of the picture
 epomakerctl lab animation        # four colours at 4 fps, looping
 epomakerctl upload some.gif      # a real animation
 ```
@@ -38,6 +39,13 @@ Also check, and report:
 - After unplugging and replugging: are the pictures still there?
 - Which keys switch the screen to the picture page, the clock and the system page?
 - In `lab speed`: the fastest delay that still gives complete pictures.
+- In `lab banks`: the timings it prints, and on which attempt each bank was accepted.
+
+### Results so far
+
+RT100 Pro, firmware 0x0109: identify, clock, system page and `lab pattern` work; `lab speed` gave complete
+pictures down to no delay (0.77 s per picture, now the default). The third picture of `lab banks` was refused
+and `lab partial` changed nothing; both experiments now log more detail.
 
 ## RT82 family
 

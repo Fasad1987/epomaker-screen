@@ -24,6 +24,7 @@ def add_parser(sub) -> argparse.ArgumentParser:
     p.add_argument("experiment", choices=EXPERIMENTS)
     p.add_argument("--bank", type=int, default=1, help="bank 1..5 to draw into (default 1)")
     p.add_argument("--delays", default="5,2,1,0", help="speed: milliseconds between pixel packets to try")
+    p.add_argument("--pause", type=float, default=0.0, help="banks: seconds to wait between pictures")
     return p
 
 
@@ -120,15 +121,26 @@ def main(a, session, log) -> int:
 
         elif a.experiment == "partial":
             s.upload_still(pattern(w, h), bank)
-            log("full pattern sent; now a 1/4-size red box into the middle only")
-            box = (w * 3 // 8, h * 3 // 8, w * 5 // 8, h * 5 // 8)
-            t0 = time.monotonic()
-            sent = s.upload_still(solid(w, h, (255, 0, 0)), bank, box)
-            log(f"partial: {sent} bytes in {time.monotonic() - t0:.2f} s")
-            log("If partial updates work, the pattern stays and only a red box appears in the middle.")
-            answer = _ask("What do you see (box on pattern / box on black / red box stretched / nothing changed)?")
+            log("full pattern sent")
+            # Pixels go column by column, so a full-height strip is one contiguous run of
+            # bytes: if the firmware writes from the strip's first column, this one works.
+            steps = (
+                ("a green full-height strip in the middle", (0, 255, 0), (w * 3 // 8, 0, w * 5 // 8, h),
+                 "strip in the middle / strip on the left edge / whole screen green / nothing changed"),
+                ("a red 1/4-size box in the middle", (255, 0, 0), (w * 3 // 8, h * 3 // 8, w * 5 // 8, h * 5 // 8),
+                 "box on pattern / box on black / red stripes / nothing changed"),
+            )  # fmt: skip
+            for what, colour, box, choices in steps:
+                t0 = time.monotonic()
+                sent = s.upload_still(solid(w, h, colour), bank, box)
+                log(f"{what}: box {box}, {sent} bytes in {time.monotonic() - t0:.2f} s")
+                answer = _ask(f"What do you see ({choices})?")
+                if answer:
+                    log(f"reported: {answer}")
+            log("Now switch the screen to another page and back to the picture (the firmware may redraw only then).")
+            answer = _ask("What do you see now (pattern / pattern with strip and/or box / something else)?")
             if answer:
-                log(f"reported: {answer}")
+                log(f"reported after switching: {answer}")
 
         elif a.experiment == "animation":
             frames = [solid(w, h, c) for c in ((255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 255))]
@@ -143,9 +155,24 @@ def main(a, session, log) -> int:
 
         elif a.experiment == "banks":
             colours = (None, (255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0))
+            failed = []
             for b, c in enumerate(colours):
-                s.upload_still(pattern(w, h) if c is None else solid(w, h, c), b)
-                log(f"bank {b + 1}: {'pattern' if c is None else c}")
+                if b and a.pause:
+                    time.sleep(a.pause)
+                t0 = time.monotonic()
+                try:
+                    s.upload_still(pattern(w, h) if c is None else solid(w, h, c), b)
+                except DeviceError as e:
+                    failed.append(b + 1)
+                    log(f"bank {b + 1}: FAILED after {time.monotonic() - t0:.1f} s: {e}")
+                    continue
+                p = s.last_prepare
+                log(
+                    f"bank {b + 1}: {'pattern' if c is None else c}, {time.monotonic() - t0:.2f} s, "
+                    f"accepted on attempt {p.get('attempts')} after {p.get('seconds', 0):.2f} s (reply {p.get('reply')})"
+                )
+            if failed:
+                log(f"banks {failed} failed; try again with a pause, e.g. `epomakerctl lab banks --pause 3`")
             log("Banks 1-5: pattern, red, green, blue, yellow. Cycle the pictures on the keyboard")
             log("and note which order they come in and whether the keyboard switched by itself.")
             answer = _ask("What did you observe?")

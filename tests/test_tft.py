@@ -4,8 +4,8 @@ import threading
 import pytest
 
 from epomaker_screen import devices, hid
-from epomaker_screen.drivers.base import Animation, SystemInfo, Unsupported
-from epomaker_screen.drivers.tft import RefreshConfig, TftDriver, TftSession, codec
+from epomaker_screen.drivers.base import Animation, DeviceError, SystemInfo, Unsupported
+from epomaker_screen.drivers.tft import PREPARE_ATTEMPTS, RefreshConfig, TftDriver, TftSession, codec
 from epomaker_screen.models import by_key, by_usb_id
 from fake_tft import FakeTft
 
@@ -97,6 +97,17 @@ def test_prepare_is_retried_until_the_keyboard_is_ready():
     fake.refuse_prepare = 3
     session(fake).upload_still(frame(lambda x, y: (1, 2, 3)))
     assert sum(p[0] == codec.PREPARE_565 for p in fake.sent) == 4
+
+
+def test_a_busy_keyboard_gets_about_ten_seconds_then_a_clear_error():
+    fake = FakeTft()
+    fake.refuse_prepare = PREPARE_ATTEMPTS - 1
+    s = session(fake)
+    s.upload_still(frame(lambda x, y: (1, 2, 3)))
+    assert s.last_prepare["attempts"] == PREPARE_ATTEMPTS
+    fake.refuse_prepare = PREPARE_ATTEMPTS
+    with pytest.raises(DeviceError, match="did not accept.*last reply a5 00"):
+        s.upload_still(frame(lambda x, y: (1, 2, 3)))
 
 
 def test_upload_takes_stills_or_one_animation():

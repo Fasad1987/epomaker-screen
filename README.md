@@ -22,7 +22,7 @@ command-line tool, with one driver per screen family.
 | ---------------------------------------------- | ------- | ------ | ----------------------------------- |
 | RT82                                           | 240×135 | RDM    | verified                            |
 | QK108, RT98                                    | 240×136 | RDM    | same controller, not yet tried here |
-| RT100 Pro                                      | 240×240 | TFT    | implemented, being verified         |
+| RT100 Pro                                      | 240×240 | TFT    | clock, system page, pictures work   |
 | RT75, RT85, Glyph, RT100, HE65 Mag, Dynatab75X | various | TFT    | from the vendor catalog, not tried  |
 
 Two screen families are known (details in [docs/protocols](docs/protocols/)):
