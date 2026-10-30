@@ -53,6 +53,9 @@ class Settings:
     live_config: LiveConfig = field(default_factory=LiveConfig)  # rdm family: streamed frames
     refresh_config: RefreshConfig = field(default_factory=RefreshConfig)  # tft family: rewritten pictures
     system_info: bool = True  # tft family: keep the keyboard's own system page up to date
+    zoom: int = 0  # editor preview: 0 fits the window, else a fixed scale
+    show_grid: bool = False
+    snap: bool = True
 
     @classmethod
     def load(cls) -> Settings:

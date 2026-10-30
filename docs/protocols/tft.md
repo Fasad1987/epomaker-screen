@@ -158,3 +158,10 @@ replaces the picture rather than patching it.
 
 The firmware draws a clock and a system page itself: Epomaker Screen sets the clock on connect and after suspend and
 sends system values every 2 s, which costs nothing in flash.
+
+**This is the only real-time path on these keyboards.** The keyboard does not measure anything: the "CPU" and
+"RAM" on its system page are whatever the host last sent with command `22` (CPU %, CPU °C, RAM used/total, disk
+free/total, network up/down). Epomaker's own app does the same. The firmware redraws the page on each packet, so a
+packet every second or two looks live. A picture, by contrast, is a flash write of the whole screen plus 1–5 s in
+which the keyboard refuses the next upload, so live widgets on TFT keyboards are slow by design. For 5 s after
+a picture the driver also holds back system packets.
