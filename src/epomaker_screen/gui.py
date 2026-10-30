@@ -16,7 +16,7 @@ from . import __version__
 from .config import Settings, load_layout, save_layout
 from .drivers.base import Animation
 from .drivers.rdm.live import LiveConfig
-from .drivers.tft import RefreshConfig
+from .drivers.tft import MIN_REFRESH_S, RefreshConfig
 from .qt import QtCore, QtGui, QtWidgets, Signal
 from .render import FIT_MODES, RT82, Geometry, load_frames, to_rgb
 from .service import FROZEN, Controller
@@ -829,19 +829,18 @@ class MainWindow(QtWidgets.QMainWindow):
         f.addRow("Flash area", area)
         f.addRow("New stream every", seg)
         rc = self.settings.refresh_config
-        interval = QtWidgets.QSpinBox(minimum=10, maximum=86400, value=int(rc.interval_s), suffix=" s")
+        interval = QtWidgets.QSpinBox(
+            minimum=int(MIN_REFRESH_S), maximum=86400, value=int(max(MIN_REFRESH_S, rc.interval_s)), suffix=" s"
+        )
         interval.setToolTip(
             "RT100 Pro and other TFT keyboards: how often live mode redraws the picture. "
-            "Each change rewrites a picture bank in the keyboard's flash."
+            "Each change rewrites a picture in the keyboard's flash, which wears it out: every 15 minutes lasts "
+            "years, every minute only months."
         )
-        partial = QtWidgets.QCheckBox("Send only the changed part of the picture (experimental)")
-        partial.setChecked(rc.partial)
-        partial.setToolTip("Much faster, if the keyboard's firmware supports it; check with `epomakerctl lab partial`.")
         sysinfo = QtWidgets.QCheckBox("Keep the keyboard's own system page up to date (CPU, RAM, disk)")
         sysinfo.setChecked(self.settings.system_info)
         f.addRow(QtWidgets.QLabel("<b>RT100 Pro and other TFT keyboards</b>"))
         f.addRow("Redraw live widgets every", interval)
-        f.addRow(partial)
         f.addRow(sysinfo)
         bb = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel
@@ -864,9 +863,7 @@ class MainWindow(QtWidgets.QMainWindow):
             lead_frames=lc.lead_frames,
             slowdown=lc.slowdown,
         )
-        self.settings.refresh_config = RefreshConfig(
-            interval_s=interval.value(), partial=partial.isChecked(), bank=rc.bank
-        )
+        self.settings.refresh_config = RefreshConfig(interval_s=interval.value(), bank=rc.bank)
         self.settings.system_info = sysinfo.isChecked()
         self.ctl.set_system_info(FirmwareSystemInfo() if self.settings.system_info else None)
         self.settings.save()

@@ -6,6 +6,33 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- TFT pixel packets go 1 ms apart instead of the vendor's 2 ms: a 56-frame RT100 Pro animation in 149 s instead
+  of 265 s. `--chunk-delay MS` changes it; no delay corrupted pictures in a row and long animations.
+- `upload --fit` works without a value (`contain`).
+- `lab flow` reads the keyboard's replies during a transfer.
+
+- RT100 Pro animations are limited to 47 frames: `lab frames` measured 6 MiB of screen memory with the picture
+  banks right after frame 47 (the vendor app assumes 7 MiB and 56 frames, which overwrites the banks).
+
+### Added
+- The RT100 Pro is verified on hardware (firmware 0x0109).
+- `lab frames` uploads numbered frames to measure how many fit and where the picture banks are.
+- `epomakerctl reset-screen` for TFT keyboards: a black animation and black pictures in every bank, the clock set, the app's live mode and
+  system page feed turned off. `--erase` sends the vendor's screen flash erase (`0xAC`) after typing `ERASE`.
+- TFT keyboards: a busy keyboard gets about 10 s to accept an upload instead of 2 s, and the error names the
+  attempts and the last reply.
+- `lab banks` logs timings, carries on past a refused bank and takes `--pause`; `lab partial` also tries a
+  full-height strip and a page switch.
+- TFT live mode redraws every 15 minutes by default and at least every 5 (it was 1 minute): each update rewrites
+  flash, and once a minute would wear it out within months.
+- The "send only the changed part" setting is gone from the app: an RT100 Pro draws the part on black instead of
+  patching the picture.
+
+### Fixed
+- `boot-keyboard.sh` could report a module as missing from a large initrd although it was there
+  (`echo | grep -q` under `pipefail`).
+
 ## [0.3.0] - 2026-10-30
 
 The project is now **Epomaker Screen**, for Epomaker keyboards in general.

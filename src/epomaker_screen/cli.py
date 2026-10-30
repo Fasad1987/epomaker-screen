@@ -61,6 +61,8 @@ def _session(a) -> Iterator:
     driver = _driver(a)
     with exclusive():
         s = driver.open(log=log)
+        if getattr(a, "chunk_delay", None) is not None and hasattr(s, "chunk_delay"):
+            s.chunk_delay = a.chunk_delay / 1000
         try:
             yield driver, s
         except DeviceError:
@@ -272,7 +274,9 @@ def cmd_live(a) -> int:
     if a.fps and driver.family == "rdm":
         config.fps = a.fps
     if a.interval and driver.family == "tft":
-        config.interval_s = max(10.0, a.interval)
+        from .drivers.tft import MIN_REFRESH_S
+
+        config.interval_s = max(MIN_REFRESH_S, a.interval)
     with _session(a) as (_d, s):
         live = s.live(render, fallback, config)
         live.start()
@@ -309,6 +313,49 @@ def cmd_language(a) -> int:
             raise DeviceError(f"{driver.name} has no language setting")
         s.toggle_language()
     log("screen language toggled")
+    return 0
+
+
+ERASE_WARNING = """\
+This sends Epomaker's "erase screen flash" command (0xAC). What it does on this keyboard
+is not known yet:
+  - it may bring back the factory picture, or leave the picture page blank;
+  - it may also erase graphics the firmware draws its clock and system pages with,
+    which only Epomaker's own software (Windows/macOS) could put back. On an RT100 Pro
+    those graphics seem to sit in the same memory as the pictures (an over-long
+    animation showed parts of the clock page), so this risk is real.
+Keys, lighting and the rest of the keyboard are not touched. Try the safe reset
+(without --erase) first."""
+
+
+def cmd_reset_screen(a) -> int:
+    from .config import Settings
+
+    with _session(a) as (driver, s):
+        if driver.family != "tft":
+            raise DeviceError(f"{driver.name}: reset-screen is for TFT-family keyboards (RT100 Pro, RT75, ...)")
+        if a.erase:
+            print(ERASE_WARNING)
+            if not a.yes_erase_screen_flash:
+                if not sys.stdin.isatty():
+                    raise DeviceError(
+                        "--erase needs confirmation: run it in a terminal or pass --yes-erase-screen-flash"
+                    )
+                if input("Type ERASE to continue: ").strip() != "ERASE":
+                    log("cancelled, nothing sent")
+                    return 1
+            reply = s.erase_screen_flash()
+            log(f"erase done (reply {reply[:8].hex(' ')}), clock set. Check the picture, clock and system pages.")
+        else:
+            log("writing a black animation and black pictures into every bank ...")
+            s.reset_screen(progress=_progress())
+            print()
+            log("pictures cleared, clock set")
+    settings = Settings.load()
+    if settings.live or settings.system_info:
+        settings.live, settings.system_info = False, False
+        settings.save()
+        log("turned off live mode and the system page feed in the app's settings (restart Epomaker Screen if running)")
     return 0
 
 
@@ -349,6 +396,12 @@ def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="epomakerctl", description="Control Epomaker keyboard screens without a browser.")
     ap.add_argument("--version", action="version", version=__version__)
     ap.add_argument("--device", help="model key (rt82, rt100pro, ...) or USB id (3151:5002) when several are connected")
+    ap.add_argument(
+        "--chunk-delay",
+        type=float,
+        metavar="MS",
+        help="TFT keyboards: milliseconds between pixel packets (default 1; 0 corrupts long uploads)",
+    )
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("list", help="Epomaker keyboards, their interfaces and access rights").set_defaults(fn=cmd_list)
     p = sub.add_parser("probe", help="detailed read-only report for bug reports")
@@ -360,7 +413,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("sync-time", help="set the keyboard clock").set_defaults(fn=cmd_sync)
     up = sub.add_parser("upload", help="upload pictures and animations (PNG, JPEG, GIF, WebP)")
     up.add_argument("files", nargs="+")
-    up.add_argument("--fit", choices=["contain", "cover", "stretch"], default="contain")
+    up.add_argument("--fit", choices=["contain", "cover", "stretch"], nargs="?", const="contain", default="contain")
     up.add_argument("--fps", type=int, help="override the frame rate")
     up.add_argument("--bank", type=int, help="TFT keyboards: write one still into bank 1..5 and keep the others")
     up.add_argument(
@@ -371,6 +424,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--watch", action="store_true", help="keep sending every 2 s")
     p.set_defaults(fn=cmd_sysinfo)
     sub.add_parser("language", help="TFT keyboards: toggle the screen language").set_defaults(fn=cmd_language)
+    p = sub.add_parser(
+        "reset-screen", help="TFT keyboards: clear pictures and animation, set the clock, stop the app's feeds"
+    )
+    p.add_argument("--erase", action="store_true", help="instead send the vendor's screen flash erase (asks first)")
+    p.add_argument("--yes-erase-screen-flash", action="store_true", help=argparse.SUPPRESS)
+    p.set_defaults(fn=cmd_reset_screen)
     for name, fn, hlp in (
         ("layout", cmd_layout, "render the widget layout once and upload it as a picture"),
         ("live", cmd_live, "live mode: widgets update continuously (Ctrl+C to stop)"),
@@ -384,7 +443,11 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--size", help="screen size WxH (default 240x135)")
         if name == "live":
             p.add_argument("--fps", type=int, help="RT82 family: frames per second")
-            p.add_argument("--interval", type=float, help="TFT family: seconds between picture updates (min 10)")
+            p.add_argument(
+                "--interval",
+                type=float,
+                help="TFT family: seconds between picture updates (min 300: each one wears the flash)",
+            )
         if name == "watch":
             p.add_argument("--live", action="store_true", help="also keep live mode running")
         p.set_defaults(fn=fn)

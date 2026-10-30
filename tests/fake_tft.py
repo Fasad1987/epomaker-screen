@@ -27,13 +27,14 @@ class FakeTft:
         self.system_info = None
         self.refuse_prepare = 0  # answer this many prepares with "not ready"
         self.closed = False
+        self.erased = 0
 
     # -- transport -----------------------------------------------------------
 
     def set_feature(self, data: bytes, report_id: int = 0) -> None:
         assert report_id == 0 and len(data) == 64, (report_id, len(data))
         assert data[7] == 255 - (sum(data[:7]) & 255), f"bad checksum in {data[:8].hex()}"
-        assert data[0] in codec.ALLOWED, f"command 0x{data[0]:02X} must never be sent"
+        assert data[0] in codec.ALLOWED or data[0] == codec.ERASE_SCREEN, f"command 0x{data[0]:02X} must never be sent"
         self.sent.append(bytes(data))
         cmd = data[0]
         if cmd == codec.IDENTIFY:
@@ -48,6 +49,11 @@ class FakeTft:
             self._prepare(data)
         elif cmd in (codec.DATA_565, codec.DATA_888):
             self._data(data)
+        elif cmd == codec.ERASE_SCREEN:
+            self.banks.clear()
+            self.animation = None
+            self.erased += 1
+            self.reply = codec.ERASED + bytes(59)
         elif cmd == codec.CLOCK:
             self.clock = struct.unpack(">H5B", data[8:15])
         elif cmd == codec.SYSTEM_INFO:

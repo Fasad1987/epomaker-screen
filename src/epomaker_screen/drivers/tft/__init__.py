@@ -31,10 +31,18 @@ from . import codec
 COMMAND_PAGE, COMMAND_USAGE = 0xFFFF, 0x0002  # vendor command collection (feature report 0, 64 bytes)
 
 # Vendor timings (desktop app): 10 ms before a command, 10 ms before reading its
-# reply, 100 ms before reading a prepare reply, 2 ms between pixel packets.
+# reply, 100 ms before reading a prepare reply.
 SEND_DELAY, READ_DELAY, PREPARE_READ_DELAY = 0.01, 0.01, 0.1
-CHUNK_DELAY = 0.002
-PREPARE_RETRIES = 10
+# The vendor app waits 2 ms between pixel packets. An RT100 Pro (firmware 0x0109)
+# takes one picture with no delay, but acknowledges packets it cannot keep up with
+# (it writes them to flash): back-to-back pictures and a 56-frame animation came out
+# corrupted. There is no flow control, so uploads are paced by time: a 56-frame
+# animation came out right at both 2 ms and 1 ms.
+CHUNK_DELAY = 0.001
+# The vendor app gives up on a prepare after ten retries (about 2 s). An RT100 Pro
+# refused that long right after two full pictures in a row, so keep asking longer.
+PREPARE_RETRY_DELAY = 0.1
+PREPARE_ATTEMPTS = 48  # about 10 s at 210 ms per attempt
 
 
 class Transport(Protocol):
@@ -55,12 +63,21 @@ def command_node(usb_path: str, vid: int, pid: int, devices: list[hid.HidInfo] |
     return None
 
 
+# Each live update rewrites a whole picture in the keyboard's flash (29 erase blocks on
+# an RT100 Pro). NOR flash lasts about 100,000 erases, and there is no sign of wear
+# levelling: once a minute would wear a bank out in about 70 days of use, every
+# 15 minutes in about 3 years.
+MIN_REFRESH_S = 300.0
+
+
 @dataclass
 class RefreshConfig:
     """Live mode for TFT keyboards: each update rewrites a picture bank."""
 
-    interval_s: float = 60.0  # how often to re-render and send changes
-    partial: bool = False  # send only the changed rectangle (experimental: firmware support unverified)
+    interval_s: float = 900.0  # how often to re-render and send changes (at least MIN_REFRESH_S)
+    # Send only the changed rectangle. An RT100 Pro (firmware 0x0109) draws the box on black,
+    # dropping the rest of the picture, so this stays off.
+    partial: bool = False
     bank: int = 0
 
 
@@ -109,12 +126,15 @@ class TftSession:
         self.log = log
         self.sleep = sleep
         self.chunk_delay = CHUNK_DELAY
+        self.last_prepare: dict = {}
         self.caps = capabilities(model)
         self._lock = threading.RLock()
 
     # -- raw exchange ------------------------------------------------------
 
-    def send(self, pkt: bytes, delay: float = SEND_DELAY) -> None:
+    def send(self, pkt: bytes, delay: float = SEND_DELAY, allow_erase: bool = False) -> None:
+        if pkt[0] not in codec.ALLOWED and not (allow_erase and pkt[0] == codec.ERASE_SCREEN):
+            raise ValueError(f"command 0x{pkt[0]:02X} is not allowed by this driver")
         self.sleep(delay)
         try:
             self.t.set_feature(pkt)
@@ -158,15 +178,29 @@ class TftSession:
     def info(self) -> dict:
         return {**self.identify(), "width": self.caps.width, "height": self.caps.height}
 
+    def _prepare(self, prepare: bytes) -> None:
+        """Sends a prepare until the keyboard accepts it; records how long that took."""
+        start, reply = time.monotonic(), b""
+        for attempts in range(1, PREPARE_ATTEMPTS + 1):
+            if attempts > 1:
+                self.sleep(PREPARE_RETRY_DELAY)
+            reply = self.exchange(prepare, PREPARE_READ_DELAY)
+            if len(reply) >= 2 and reply[0] == prepare[0] and reply[1] == 1:
+                break
+        else:
+            attempts = PREPARE_ATTEMPTS + 1
+        self.last_prepare = {"attempts": attempts, "seconds": time.monotonic() - start, "reply": reply[:8].hex(" ")}
+        if attempts > PREPARE_ATTEMPTS:
+            raise DeviceError(
+                f"the keyboard did not accept the picture upload ({PREPARE_ATTEMPTS} attempts in "
+                f"{self.last_prepare['seconds']:.1f} s, last reply {self.last_prepare['reply'] or 'empty'})"
+            )
+        if attempts > 1:
+            self.log(f"keyboard accepted the upload after {attempts} attempts ({self.last_prepare['seconds']:.1f} s)")
+
     def _transfer(self, prepare: bytes, packets: list[bytes], progress: Progress) -> None:
         with self._lock:
-            for _attempt in range(PREPARE_RETRIES + 1):
-                reply = self.exchange(prepare, PREPARE_READ_DELAY)
-                if len(reply) >= 2 and reply[0] == prepare[0] and reply[1] == 1:
-                    break
-                self.sleep(0.1)
-            else:
-                raise DeviceError("the keyboard did not accept the picture upload")
+            self._prepare(prepare)
             self.sleep(0.1)
             total = len(packets)
             for i, p in enumerate(packets):
@@ -191,8 +225,10 @@ class TftSession:
         )
         return len(data)
 
-    def upload_animation(self, frames: list[bytes], fps: int, progress: Progress = lambda d, t: None) -> None:
-        maximum = self.model.extra["max_frames"]
+    def upload_animation(
+        self, frames: list[bytes], fps: int, progress: Progress = lambda d, t: None, maximum: int | None = None
+    ) -> None:
+        maximum = maximum or self.model.extra["max_frames"]
         if not 2 <= len(frames) <= maximum:
             raise ValueError(f"{self.model.name} animations take 2..{maximum} frames")
         rgb24 = self.model.extra["pixel_bytes"] == 3
@@ -214,6 +250,47 @@ class TftSession:
             raise ValueError(f"{self.model.name} stores up to {self.model.extra['banks']} still pictures")
         for bank, item in enumerate(items):
             self.upload_still(item.frames[0], bank, progress=progress)
+
+    def reset_screen(self, progress: Progress = lambda d, t: None) -> None:
+        """The safe reset: a black two-frame animation (the shortest there is), black stills in every
+        bank, and the clock set. Stills do not replace the animation, so both are written.
+
+        There is no readback, so the factory pictures cannot be saved or restored from the host.
+        """
+        black = bytes(self.caps.width * self.caps.height * 3)
+        banks = self.model.extra["banks"]
+        steps = banks + 2  # the animation counts as two pictures
+        self.upload_animation([black, black], 4, progress=lambda d, t: progress(2 * d, steps * t))
+        for bank in range(banks):
+            self.upload_still(black, bank, progress=lambda d, t, b=bank: progress((b + 2) * t + d, steps * t))
+        self.sync_time()
+
+    def erase_screen_flash(self, timeout: float = 120.0) -> bytes:
+        """Sends the vendor's "erase screen flash" command (0xAC) and waits for its reply.
+
+        Effect unverified: it may bring back the factory picture, or also erase graphics the
+        firmware draws its own pages with. Only call this after the user confirmed.
+        """
+        with self._lock:
+            self.send(codec.erase_screen(), SEND_DELAY, allow_erase=True)
+            start, reply = time.monotonic(), b""
+            polls = max(1, int(timeout / 0.5))
+            for _ in range(polls):
+                self.sleep(0.5)
+                try:
+                    reply = self.t.get_feature(0, codec.REPORT)
+                except OSError as e:
+                    raise DeviceError(f"reply to 0xAC: {e}") from e
+                if reply.startswith(codec.ERASED):
+                    self.log(f"screen flash erased in {time.monotonic() - start:.1f} s")
+                    break
+            else:
+                raise DeviceError(
+                    f"no 'erased' reply within {timeout:.0f} s (last reply {reply[:8].hex(' ') or 'empty'})"
+                )
+        self.sleep(1.0)
+        self.sync_time()
+        return reply
 
     def live(self, render, fallback: bytes, config: RefreshConfig) -> _Refresh:
         return _Refresh(self, render, config, self.log)

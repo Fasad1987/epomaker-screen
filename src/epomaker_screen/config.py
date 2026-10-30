@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
 from .drivers.rdm.live import LiveConfig
-from .drivers.tft import RefreshConfig
+from .drivers.tft import MIN_REFRESH_S, RefreshConfig
 
 APP = "epomaker-screen"
 OLD_APP = "rt82-plasma"  # before 0.3
@@ -68,7 +68,7 @@ class Settings:
             s.live_config.check()
         except ValueError:
             s.live_config = LiveConfig()
-        s.refresh_config.interval_s = max(10.0, s.refresh_config.interval_s)
+        s.refresh_config.interval_s = max(MIN_REFRESH_S, s.refresh_config.interval_s)
         return s
 
     def save(self) -> None:
