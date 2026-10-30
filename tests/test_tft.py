@@ -73,6 +73,7 @@ def test_safe_reset_blacks_out_every_bank_and_sets_the_clock():
     s.reset_screen()
     assert set(fake.banks) == {0, 1, 2, 3, 4}
     assert all(fake.pixel(b, 120, 120) == (0, 0, 0) for b in range(5))
+    assert len(fake.animation) == 2 and not any(fake.animation[0])
     assert fake.clock is not None and fake.erased == 0
 
 

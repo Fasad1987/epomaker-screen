@@ -345,7 +345,7 @@ def cmd_reset_screen(a) -> int:
             reply = s.erase_screen_flash()
             log(f"erase done (reply {reply[:8].hex(' ')}), clock set. Check the picture, clock and system pages.")
         else:
-            log("writing black pictures into every bank (this also replaces the animation) ...")
+            log("writing a black animation and black pictures into every bank ...")
             s.reset_screen(progress=_progress())
             print()
             log("pictures cleared, clock set")

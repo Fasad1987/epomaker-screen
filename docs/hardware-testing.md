@@ -49,7 +49,7 @@ RT100 Pro, firmware 0x0109: identify, clock, system page and `lab pattern` work;
 pictures down to no delay (0.77 s per picture), but with no delay pictures in a row and a long animation came out
 corrupted. A 56-frame GIF came out right at 2 ms and at 1 ms, now the default. Stills and the animation share
 memory: after the GIF, two picture pages showed single frames of it, and the end of each loop showed parts of
-other screens, so 56 frames is too many; the limit is 47 until `lab frames` measures it. `lab animation` plays and survives unplugging,
+other screens. `lab frames` measured the map: 6 MiB, frames 48–52 are the banks, so the limit is 47 frames. `lab animation` plays and survives unplugging,
 with a visible wipe on each frame. A partial box is drawn on black, replacing the picture. `lab banks` had a
 picture refused (bank 3 in one run, bank 5 in another) with the vendor's 2 s wait; the driver now waits longer.
 

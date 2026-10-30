@@ -245,14 +245,17 @@ class TftSession:
             self.upload_still(item.frames[0], bank, progress=progress)
 
     def reset_screen(self, progress: Progress = lambda d, t: None) -> None:
-        """The safe reset: black stills in every bank (which also replaces the animation) and the clock set.
+        """The safe reset: a black two-frame animation (the shortest there is), black stills in every
+        bank, and the clock set. Stills do not replace the animation, so both are written.
 
         There is no readback, so the factory pictures cannot be saved or restored from the host.
         """
         black = bytes(self.caps.width * self.caps.height * 3)
         banks = self.model.extra["banks"]
+        steps = banks + 2  # the animation counts as two pictures
+        self.upload_animation([black, black], 4, progress=lambda d, t: progress(2 * d, steps * t))
         for bank in range(banks):
-            self.upload_still(black, bank, progress=lambda d, t, b=bank: progress(b * t + d, banks * t))
+            self.upload_still(black, bank, progress=lambda d, t, b=bank: progress((b + 2) * t + d, steps * t))
         self.sync_time()
 
     def erase_screen_flash(self, timeout: float = 120.0) -> bytes:

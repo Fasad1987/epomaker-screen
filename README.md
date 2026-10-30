@@ -120,7 +120,7 @@ epomakerctl lab pattern                # TFT keyboards: protocol experiments, se
 ```
 
 There is no command to read pictures back, so the factory picture cannot be saved first. `reset-screen` writes
-black pictures into every bank, sets the clock and turns off the app's live mode and system page feed.
+a black animation and black pictures into every bank, sets the clock and turns off the app's live mode and system page feed.
 `reset-screen --erase` sends Epomaker's "erase screen flash" command after you type `ERASE`; its effect is not
 verified yet: it may bring back the factory picture, leave the picture page blank, or also erase the graphics of
 the keyboard's clock and system pages, which only Epomaker's own software could put back. Everything on the

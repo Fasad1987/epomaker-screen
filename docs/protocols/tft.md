@@ -17,7 +17,7 @@ animation is still there after unplugging the cable. The rest is still open (bel
 
 | Model              | USB id      | Internal id | Screen  | Pixels | Animation frames |
 | ------------------ | ----------- | ----------- | ------- | ------ | ---------------- |
-| RT100 Pro          | `3151:5002` | 3152        | 240×240 | RGB565 | 47 (vendor: 56, too many) |
+| RT100 Pro          | `3151:5002` | 3152        | 240×240 | RGB565 | 47 (measured; vendor: 56) |
 | RT75               | `3151:5002` | 3223        | 240×240 | RGB565 | 47               |
 | RT85               | `3151:5002` | 2895        | 320×172 | RGB565 | 51               |
 | Glyph              | `3151:5002` | 3059        | 428×142 | RGB565 | 46               |
@@ -97,22 +97,30 @@ upload, which fell behind the host. There is no flow control: `lab flow` showed 
 is just a copy of the last packet received, with no progress or busy signal. So uploads are paced by time. A
 56-frame animation came out right at 2 ms (265 s) and at 1 ms (149 s), the driver's default.
 
-**Stills and the animation share memory.** After a 56-frame animation, two of the picture pages showed single
-frames of it; a still written to bank 1 after an animation left the animation showing only its first frame. So
-uploading pictures can damage the animation and the other way round.
+**Stills and the animation share memory** (see the map below): an animation longer than 47 frames runs into the
+banks. A still written to bank 1 after a 56-frame animation once left the animation showing only its first frame;
+that has not been reproduced.
 
-**The RT100 Pro holds fewer frames than the vendor app assumes.** Its catalog entry has no memory size, so the
-vendor app assumes 7 MiB, 56 frames. A 56-frame animation, at the end of each loop, showed parts of other screens,
-the clock page among them, before starting again. So the firmware's own graphics seem to share this memory too.
-The driver allows 47 frames (6 MiB, as on the RT75) until `lab frames` measures the real limit: it uploads
-numbered frames, then you note the last clean number and which numbers the picture pages show.
+**Screen memory map (RT100 Pro, measured with `lab frames`).** The catalog entry has no memory size, so the vendor
+app assumes 7 MiB and 56 frames. A 56-frame numbered animation showed:
+
+- frames 1–53 clean, then parts of other screens (the clock page among them) until the loop restarted;
+- picture pages showing frames 48 and 52.
+
+That matches the vendor layout with **6 MiB**: a 4 KiB header, then 118,784-byte blocks (a 115,200-byte frame
+rounded up to 4 KiB blocks). Animation frame *n* is block *n − 1*; the five still banks are the blocks right after
+the 47 frames the formula allows, so frames 48–52 are banks 1–5. Frame 53 is the last block that fits in 6 MiB;
+past it the firmware reads other data. Writes there seem to be ignored: the clock page stayed intact.
+
+So the driver allows 47 frames, and an animation never overwrites the banks. A still never shortens the animation
+either: after black stills went into every bank, the numbered animation still played, with black frames 48–52.
+`reset-screen` therefore writes a black two-frame animation as well as black banks.
 
 After a picture the keyboard refuses the next prepare for 1–5 s (reply `a5 00 ...`), probably while it finishes
 writing flash. The driver waits up to about 10 s.
 
 ### Open questions (to settle on hardware)
 
-- How many frames fit, and how do banks map onto animation frames (`lab frames`)?
 - What does `AC` (erase screen flash) do: bring back the factory picture, blank the picture page, or also erase
   the firmware's own clock and system page graphics?
 - Does the keyboard switch to a bank when a picture is written to it, or only store it? (`lab banks`)
