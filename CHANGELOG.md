@@ -7,10 +7,14 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
-- `--chunk-delay MS` sets the pause between TFT pixel packets (default 2 ms, the vendor's). No delay is 6.6 times
-  faster but corrupted pictures in a row and long animations on an RT100 Pro.
+- TFT pixel packets go 1 ms apart instead of the vendor's 2 ms: a 56-frame RT100 Pro animation in 149 s instead
+  of 265 s. `--chunk-delay MS` changes it; no delay corrupted pictures in a row and long animations.
 - `upload --fit` works without a value (`contain`).
 - `lab flow` reads the keyboard's replies during a transfer.
+
+### Added
+- `epomakerctl reset-screen` for TFT keyboards: black pictures in every bank, the clock set, the app's live mode and
+  system page feed turned off. `--erase` sends the vendor's screen flash erase (`0xAC`) after typing `ERASE`.
 - TFT keyboards: a busy keyboard gets about 10 s to accept an upload instead of 2 s, and the error names the
   attempts and the last reply.
 - `lab banks` logs timings, carries on past a refused bank and takes `--pause`; `lab partial` also tries a

@@ -54,6 +54,7 @@ flash erase (`AC`), key-map or firmware-update commands.
 | `A5` | prepare RGB565 | see below; a write that authorises an upload, not a query                                                 |
 | `25` | pixels RGB565  | see below                                                                                                 |
 | `A9`/`29` | RGB888 variants | same layout, three bytes per pixel (Dynatab75X)                                                   |
+| `AC` | erase screen flash | vendor app expects reply prefix `AC AA AA 55 55`; effect unverified, sent only by `reset-screen --erase` |
 
 ### Pictures
 
@@ -74,7 +75,7 @@ last reply.
 
 **Pixels** (`25`), 56 bytes per packet: `[1]` bank or frame index, `[2]` frames, `[3]` delay, `[4:6]` packet index
 (u16 LE, restarting at 0 for each animation frame), `[6]` bytes in this packet. The vendor desktop app waits
-2 ms between packets, and so does the driver (`--chunk-delay` changes it).
+2 ms between packets; the driver waits 1 ms (`--chunk-delay` changes it).
 
 Pixels are RGB565 **big-endian**, ordered **column by column** (x outer, y inner): for a 2×2 image red, green /
 blue, white the bytes are `F8 00 00 1F 07 E0 FF FF`.
@@ -92,15 +93,22 @@ pictures complete:
 One picture after a pause survives any of these, but the keyboard acknowledges packets it has no time to store:
 with no delay, five pictures in a row and a 56-frame animation (6.3 MB in 33 s) came out corrupted. A half-written
 picture shows white where its flash was erased and not written. The keyboard draws its own progress bar during an
-upload, which fell behind the host. `lab flow` reads replies during a transfer, looking for a progress or busy
-signal to pace uploads by; until one is found the driver keeps the vendor's 2 ms.
+upload, which fell behind the host. There is no flow control: `lab flow` showed that during a transfer the reply
+is just a copy of the last packet received, with no progress or busy signal. So uploads are paced by time. A
+56-frame animation came out right at 2 ms (265 s) and at 1 ms (149 s), the driver's default.
+
+**Stills and the animation share memory.** After a 56-frame animation, two of the picture pages showed single
+frames of it; a still written to bank 1 after an animation left the animation showing only its first frame. So
+uploading pictures can damage the animation and the other way round.
 
 After a picture the keyboard refuses the next prepare for 1–5 s (reply `a5 00 ...`), probably while it finishes
 writing flash. The driver waits up to about 10 s.
 
 ### Open questions (to settle on hardware)
 
-- Is there a way to see when the keyboard has stored a packet (`lab flow`)? That would allow safe, faster uploads.
+- How exactly do banks map onto animation frames (which frames show up as stills)?
+- What does `AC` (erase screen flash) do: bring back the factory picture, blank the picture page, or also erase
+  the firmware's own clock and system page graphics?
 - Does the keyboard switch to a bank when a picture is written to it, or only store it? (`lab banks`)
 - A prepare with a smaller box **replaces** the picture: an RT100 Pro (0x0109) showed the box on black (one earlier
   run showed no change, probably on another screen page). So boxes cannot patch a picture, only make smaller ones.

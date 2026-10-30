@@ -396,7 +396,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--chunk-delay",
         type=float,
         metavar="MS",
-        help="TFT keyboards: milliseconds between pixel packets (default 2, the vendor's; lower can corrupt pictures)",
+        help="TFT keyboards: milliseconds between pixel packets (default 1; 0 corrupts long uploads)",
     )
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("list", help="Epomaker keyboards, their interfaces and access rights").set_defaults(fn=cmd_list)
