@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Epomaker Screen
+Name[ru]=Экран Epomaker
+Comment=Keeps Epomaker keyboard clocks in sync and shows widgets
+Comment[ru]=Синхронизирует время на клавиатурах Epomaker и показывает виджеты
+Exec=epomaker-screen --tray
+Icon=epomaker-screen
+Terminal=false
+NoDisplay=true
+X-KDE-autostart-phase=2
+X-GNOME-Autostart-enabled=true

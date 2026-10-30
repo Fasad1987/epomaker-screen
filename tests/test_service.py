@@ -1,12 +1,15 @@
 import threading
 import time
 
+from epomaker_screen import service
+from epomaker_screen.drivers import rdm
+from epomaker_screen.drivers.rdm import device
+from epomaker_screen.drivers.rdm.device import Screen
+from epomaker_screen.drivers.rdm.live import LiveConfig
+from epomaker_screen.drivers.rdm.protocol import Cmd
+from epomaker_screen.models import by_key
+from epomaker_screen.service import CONNECTED, FROZEN, LIVE
 from fake_screen import Clock, FakeScreen
-from rt82 import device, live, service  # noqa: F401
-from rt82.device import Screen
-from rt82.live import LiveConfig
-from rt82.protocol import Cmd
-from rt82.service import CONNECTED, FROZEN, LIVE
 from test_live import FakeKeyboard, stamp
 
 
@@ -19,36 +22,53 @@ def wait_for(cond, timeout=10.0):
     return False
 
 
-def test_controller_syncs_time_streams_and_runs_jobs(monkeypatch, tmp_path):
+class FakeRdmDriver(rdm.RdmDriver):
+    """An RT82 driver whose sessions talk to the simulated controller."""
+
+    def __init__(self, fake: FakeScreen, conn: dict):
+        super().__init__(by_key("rt82"), "3-9.3")
+        self.fake, self.conn = fake, conn
+
+    def connection_id(self):
+        return self.conn["id"]
+
+    def open(self, log=lambda m: None):
+        screen = Screen(self.fake)
+        screen.probe()
+        return rdm.RdmSession(self.model, self.usb_path, log, screen=screen)
+
+
+def _setup(monkeypatch, tmp_path, fake):
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
     monkeypatch.setattr(device.time, "sleep", lambda s: None)
-    fake = FakeScreen(Clock())
-    cmds = []
-    orig = fake.write
-    fake.write = lambda p: (cmds.append(p[1]), orig(p))
-    monkeypatch.setattr(service, "keyboard_id", lambda: "3:10")
-    monkeypatch.setattr(service.Screen, "connect", classmethod(lambda cls, timeout=15.0, log=None: Screen(fake)))
-    monkeypatch.setattr(service.Keyboard, "open", classmethod(lambda cls: FakeKeyboard()))
-    monkeypatch.setattr(live.Keyboard, "open", classmethod(lambda cls: FakeKeyboard()))
+    monkeypatch.setattr(rdm.Keyboard, "open", classmethod(lambda cls, pid=0, usb_path="": FakeKeyboard()))
+    conn = {"id": "3:10"}
+    driver = FakeRdmDriver(fake, conn)
+    return driver, conn
 
-    states, logs = [], []
-    c = service.Controller(log=logs.append, on_state=states.append)
-    c.set_live(True, lambda: (stamp, stamp(0)), LiveConfig(fps=2))
+
+def test_controller_syncs_time_streams_and_runs_jobs(monkeypatch, tmp_path):
+    fake = FakeScreen(Clock())
+    driver, _conn = _setup(monkeypatch, tmp_path, fake)
+    states, logs, seen = [], [], []
+    c = service.Controller(log=logs.append, on_state=states.append, on_device=seen.append, find=lambda: [driver])
+    c.set_live(True, lambda geometry: (stamp, stamp(0)), {"rdm": LiveConfig(fps=2)})
     c.start()
     try:
         assert wait_for(lambda: LIVE in states), (states, logs)
-        assert Cmd.SET_TIME in cmds  # time synced on connect
-        before = cmds.count(Cmd.WRITE)
-        assert wait_for(lambda: cmds.count(Cmd.WRITE) > before + 5)  # frames keep flowing
+        assert seen[0] is driver
+        assert Cmd.SET_TIME in fake.sent  # clock set on connect
+        before = fake.sent.count(Cmd.WRITE)
+        assert wait_for(lambda: fake.sent.count(Cmd.WRITE) > before + 5)  # frames keep flowing
 
-        # Time sync while live: done between frames, no restart (no second download session).
+        # Clock sync while live: done between frames, no restart.
         done = threading.Event()
         result = {}
-        syncs = cmds.count(Cmd.SET_TIME)
+        syncs = fake.sent.count(Cmd.SET_TIME)
         c.sync_now(lambda e, r: (result.update(err=e), done.set()))
         assert done.wait(10) and result["err"] is None
-        assert cmds.count(Cmd.SET_TIME) == syncs + 1
-        assert Cmd.ERASE not in cmds[-20:]  # live mode was not restarted
+        assert fake.sent.count(Cmd.SET_TIME) == syncs + 1
+        assert Cmd.ERASE not in fake.sent[-20:]  # live mode was not restarted
 
         # Any other job interrupts live mode, which comes back afterwards.
         done.clear()
@@ -56,7 +76,7 @@ def test_controller_syncs_time_streams_and_runs_jobs(monkeypatch, tmp_path):
         c.submit("info", lambda s: s.info(), lambda e, r: (result.update(err=e, info=r), done.set()))
         assert done.wait(10) and result["err"] is None
         assert wait_for(lambda: states.count(LIVE) > n), states
-        assert Cmd.START_DOWNLOAD not in cmds
+        assert Cmd.START_DOWNLOAD not in fake.sent
 
         c.set_live(False)
         assert wait_for(lambda: states[-1] == CONNECTED), states
@@ -65,30 +85,11 @@ def test_controller_syncs_time_streams_and_runs_jobs(monkeypatch, tmp_path):
         c.shutdown()
 
 
-def _patched(monkeypatch, tmp_path, fake):
-    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
-    monkeypatch.setattr(device.time, "sleep", lambda s: None)
-    conn = {"id": "3:10"}
-    monkeypatch.setattr(service, "keyboard_id", lambda: conn["id"])
-    monkeypatch.setattr(
-        service.Screen, "connect", classmethod(lambda cls, timeout=15.0, log=None, probe=True: _connect(fake, probe))
-    )
-    monkeypatch.setattr(service.Keyboard, "open", classmethod(lambda cls: FakeKeyboard()))
-    return conn
-
-
-def _connect(fake, probe):
-    s = Screen(fake)
-    if probe:
-        s.probe()
-    return s
-
-
 def test_frozen_controller_is_reported_and_left_alone_until_replug(monkeypatch, tmp_path):
     fake = FakeScreen(Clock())
-    conn = _patched(monkeypatch, tmp_path, fake)
+    driver, conn = _setup(monkeypatch, tmp_path, fake)
     states, logs = [], []
-    c = service.Controller(log=logs.append, on_state=states.append)
+    c = service.Controller(log=logs.append, on_state=states.append, find=lambda: [driver])
     fake.frozen = True
     c.start()
     try:
@@ -101,5 +102,64 @@ def test_frozen_controller_is_reported_and_left_alone_until_replug(monkeypatch, 
         fake.frozen = False  # the user power-cycled it: new USB device number
         conn["id"] = "3:11"
         assert wait_for(lambda: states[-1] == CONNECTED and fake.sent.count(Cmd.SET_TIME) == 1), states
+    finally:
+        c.shutdown()
+
+
+def test_pick_prefers_a_model_or_usb_id():
+    a, b = rdm.RdmDriver(by_key("rt82"), "1-1"), rdm.RdmDriver(by_key("qk108"), "1-2")
+    assert service.pick([a, b]) is a
+    assert service.pick([a, b], "qk108") is b
+    assert service.pick([a, b], "36b0:30af") is b
+    assert service.pick([], "rt82") is None
+
+
+class FakeTftDriver:
+    """A TFT driver whose sessions talk to the simulated keyboard."""
+
+    def __init__(self, fake):
+        from epomaker_screen.drivers.tft import TftDriver
+
+        self.inner = TftDriver(0x3151, 0x5002, "1-4")
+        self.fake = fake
+
+    def __getattr__(self, name):
+        return getattr(self.inner, name)
+
+    def connection_id(self):
+        return "1:7"
+
+    def open(self, log=lambda m: None):
+        s = self.inner.open(log, transport_factory=lambda: self.fake)
+        s.sleep = lambda t: None
+        s.chunk_delay = 0
+        return s
+
+
+def test_controller_identifies_tft_keyboards_and_feeds_their_system_page(monkeypatch, tmp_path):
+    from epomaker_screen.drivers.base import SystemInfo
+    from epomaker_screen.drivers.tft import RefreshConfig
+    from fake_tft import FakeTft
+
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setattr(service, "SYSTEM_INFO_S", 0.05)
+    fake = FakeTft()
+    driver = FakeTftDriver(fake)
+    states, logs, seen = [], [], []
+    c = service.Controller(log=logs.append, on_state=states.append, on_device=seen.append, find=lambda: [driver])
+    c.set_system_info(lambda: SystemInfo(cpu_percent=42))
+    c.start()
+    try:
+        assert wait_for(lambda: fake.clock is not None), logs
+        # The keyboard was identified on first contact and the GUI told about its real screen.
+        assert wait_for(lambda: any(d is driver and d.model and d.model.key == "rt100pro" for d in seen)), seen
+        assert wait_for(lambda: fake.system_info is not None and fake.system_info[4] == 42)
+
+        frame = bytes(240 * 240 * 3)
+        c.set_live(True, lambda geometry: (lambda t: frame, frame), {"tft": RefreshConfig(interval_s=10)})
+        assert wait_for(lambda: LIVE in states), (states, logs)
+        assert wait_for(lambda: 0 in fake.banks)
+        c.set_live(False)
+        assert wait_for(lambda: states[-1] == CONNECTED), states
     finally:
         c.shutdown()

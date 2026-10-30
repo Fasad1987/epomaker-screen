@@ -2,29 +2,55 @@
 
 from __future__ import annotations
 
-from .protocol import MAX_FRAMES, QGIF_HEIGHT, WIDTH
+from dataclasses import dataclass
+
 from .qt import QtCore, QtGui, image_bytes
 
 Qt = QtCore.Qt
 FIT_MODES = {"contain": "Fit inside", "cover": "Fill (crop)", "stretch": "Stretch"}
 
 
-def canvas(color: str = "#000000") -> QtGui.QImage:
-    img = QtGui.QImage(WIDTH, QGIF_HEIGHT, QtGui.QImage.Format.Format_RGB888)
+@dataclass(frozen=True)
+class Geometry:
+    """Visible screen size, plus the frame height a driver wants (>= height)."""
+
+    width: int
+    height: int
+    frame_height: int = 0
+
+    @property
+    def rows(self) -> int:
+        return self.frame_height or self.height
+
+    @property
+    def key(self) -> str:
+        return f"{self.width}x{self.height}"
+
+    @classmethod
+    def of(cls, caps) -> Geometry:
+        return cls(caps.width, caps.height, caps.frame_height)
+
+
+RT82 = Geometry(240, 135, 136)
+
+
+def canvas(geometry: Geometry = RT82, color: str = "#000000") -> QtGui.QImage:
+    img = QtGui.QImage(geometry.width, geometry.rows, QtGui.QImage.Format.Format_RGB888)
     img.fill(QtGui.QColor(color))
     return img
 
 
-def to_rgb(img: QtGui.QImage) -> bytes:
-    """240x136 packed RGB888, as the QGIF encoder wants it."""
-    if img.width() != WIDTH or img.height() != QGIF_HEIGHT:
-        img = fit(img, "contain")
+def to_rgb(img: QtGui.QImage, geometry: Geometry = RT82) -> bytes:
+    """Packed RGB888 of ``width x rows``, as drivers want it."""
+    w, rows = geometry.width, geometry.rows
+    if img.width() != w or img.height() != rows:
+        img = fit(img, "contain", geometry)
     img = img.convertToFormat(QtGui.QImage.Format.Format_RGB888)
     raw = image_bytes(img)
-    line, stride = WIDTH * 3, img.bytesPerLine()
+    line, stride = w * 3, img.bytesPerLine()
     if stride == line:
-        return raw[: line * QGIF_HEIGHT]
-    return b"".join(raw[y * stride : y * stride + line] for y in range(QGIF_HEIGHT))
+        return raw[: line * rows]
+    return b"".join(raw[y * stride : y * stride + line] for y in range(rows))
 
 
 def draw_fitted(p: QtGui.QPainter, src: QtGui.QImage, target: QtCore.QRectF, mode: str) -> None:
@@ -43,18 +69,20 @@ def draw_fitted(p: QtGui.QPainter, src: QtGui.QImage, target: QtCore.QRectF, mod
     p.restore()
 
 
-def fit(src: QtGui.QImage, mode: str = "contain", background: str = "#000000") -> QtGui.QImage:
-    out = canvas(background)
+def fit(
+    src: QtGui.QImage, mode: str = "contain", geometry: Geometry = RT82, background: str = "#000000"
+) -> QtGui.QImage:
+    out = canvas(geometry, background)
     p = QtGui.QPainter(out)
     p.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform)
-    # The panel shows 135 rows; keep content off the hidden last row.
-    draw_fitted(p, src, QtCore.QRectF(0, 0, WIDTH, QGIF_HEIGHT - 1), mode)
+    # Keep content on the visible rows (the RT82 panel hides the last frame row).
+    draw_fitted(p, src, QtCore.QRectF(0, 0, geometry.width, geometry.height), mode)
     p.end()
     return out
 
 
 def load_frames(
-    path: str, mode: str = "contain", max_frames: int = MAX_FRAMES, read_limit: int = 1000
+    path: str, mode: str = "contain", max_frames: int = 40, geometry: Geometry = RT82, read_limit: int = 1000
 ) -> tuple[list[QtGui.QImage], int]:
     """Loads a still or an animation (GIF, APNG, WebP). Returns frames and fps.
 
@@ -74,11 +102,11 @@ def load_frames(
     if not frames:
         raise ValueError(f"cannot open {path}: {reader.errorString()}")
     if len(frames) == 1:
-        return [fit(frames[0], mode)], 1
+        return [fit(frames[0], mode, geometry)], 1
     good = [d for d in delays if d > 0]
     fps = 1000 / (sum(good) / len(good) if good else 100)
     if max_frames and len(frames) > max_frames:
         step = len(frames) / max_frames
         frames = [frames[int(i * step)] for i in range(max_frames)]
         fps /= step
-    return [fit(f, mode) for f in frames], max(1, min(30, round(fps)))
+    return [fit(f, mode, geometry) for f in frames], max(1, min(30, round(fps)))

@@ -20,7 +20,7 @@ jobs:
       - run: ruff format --check .
       - run: shellcheck -x scripts/*.sh
       - name: Verify the udev rule
-        run: udevadm verify data/udev/70-epomaker-rt82.rules
+        run: udevadm verify data/udev/70-epomaker-screen.rules
 
   test:
     runs-on: ubuntu-24.04

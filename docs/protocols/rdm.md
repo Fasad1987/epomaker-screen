@@ -1,6 +1,6 @@
-# RT82 screen protocol
+# RDM screen protocol (RT82, QK108, RT98)
 
-What this project relies on, as implemented in `src/rt82/protocol.py` and `src/rt82/device.py`. The protocol was
+What this project relies on, as implemented in `src/epomaker_screen/drivers/rdm/`. The protocol was
 reverse-engineered by [guysoft/rt82display](https://github.com/guysoft/rt82display/blob/main/PROTOCOL.md) (RT82)
 and [wyattades/keyscreen](https://github.com/wyattades/keyscreen/blob/main/PROTOCOL.md) (QK108, same screen
 controller); their documents have the full history of each finding.
@@ -42,7 +42,7 @@ Every command gets one reply echoing `AA cmd`; reply byte 7 = `0x0F` means rejec
 | ---- | ------------- | ------------------------------------------------------------------------ |
 | `10` | FUNC_START    | opens a plain session                                                    |
 | `11` | FUNC_STOP     | closes it                                                                |
-| `12` | READ_INFO     | width/height/rotation (`rt82ctl info`)                                   |
+| `12` | READ_INFO     | width/height/rotation (`epomakerctl info`)                                   |
 | `15` | WRITE_FUNC    | writes a slot table page                                                 |
 | `16` | WRITE_FUNC_OK | commits the slot table                                                   |
 | `17` | WRITE_TIME    | sets the clock                                                           |
@@ -97,4 +97,4 @@ rows of four 2-bit palette indices (leftmost pixel in the high bits). Palette: A
 A ≥ B. The first record contains every tile; a looping file ends with one extra record that restores frame 0.
 
 The screen reads records progressively while it plays, about 3 frames ahead of the picture, which is what
-[live mode](live-mode.md) builds on.
+[live mode](../live-mode.md) builds on.

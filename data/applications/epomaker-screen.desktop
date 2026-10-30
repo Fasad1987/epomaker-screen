@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=Epomaker Screen
+Name[ru]=Экран Epomaker
+GenericName=Keyboard screen widgets
+GenericName[ru]=Виджеты на экране клавиатуры
+Comment=Widgets, pictures and clock sync for the screens of Epomaker keyboards
+Comment[ru]=Виджеты, картинки и синхронизация времени для экранов клавиатур Epomaker
+Exec=epomaker-screen
+Icon=epomaker-screen
+Terminal=false
+Categories=Utility;Settings;HardwareSettings;Qt;KDE;
+Keywords=epomaker;rt82;rt100;keyboard;lcd;screen;
+Keywords[ru]=epomaker;rt82;rt100;клавиатура;экран;
+StartupNotify=true

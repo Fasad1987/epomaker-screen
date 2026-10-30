@@ -1,11 +1,16 @@
 # Live mode
 
+This page describes live mode on the RT82 family. TFT keyboards (RT100 Pro, ...) redraw a picture bank
+instead; see [the TFT protocol](protocols/tft.md#live-widgets-on-tft-keyboards).
+
+## RT82 family
+
 The screen has no "draw this frame" command: it only plays animations from its flash. Live mode therefore
 writes an endless animation into flash and keeps appending frames a few seconds ahead of what the screen shows
-(`src/rt82/live.py`). Frames are rendered for the moment they will be on screen, so a clock shows the right time
+(`src/epomaker_screen/drivers/rdm/live.py`). Frames are rendered for the moment they will be on screen, so a clock shows the right time
 even though it is written ahead.
 
-## Flash layout
+### Flash layout
 
 ```
 blocks [0 .. area)   stream area: a sequence of segments, each a growing QGIF
@@ -27,15 +32,15 @@ block  [area]        fallback still, shown only while the stream area is erased
 - When live mode stops, the current picture is stored as a looping still, so the screen does not run into
   erased flash.
 
-## Flash wear
+### Flash wear
 
 With the defaults (1 frame per second, 24 blocks) the area is erased about once an hour: roughly 9,000 erase
 cycles a year, well below the ~100,000 that SPI NOR flash is usually rated for. Two frames per second doubles
 that. Turn live mode off when you do not need it.
 
-## Settings
+### Settings
 
-File → Settings in the app, or `live_config` in `~/.config/rt82-plasma/settings.json`:
+File → Settings in the app, or `live_config` in `~/.config/epomaker-screen/settings.json`:
 
 | Key               | Default | Meaning                                                    |
 | ----------------- | ------- | ---------------------------------------------------------- |
@@ -45,7 +50,7 @@ File → Settings in the app, or `live_config` in `~/.config/rt82-plasma/setting
 | `lead_frames`     | 5       | frames written ahead of the screen (at least 4)            |
 | `slowdown`        | 1.0     | declared/real frame time ratio; keep at or below the real one |
 
-## Testing
+### Testing
 
 `tests/fake_screen.py` simulates the controller: flash that must be erased before it is written, erase timing,
 the slot table, and playback that reads records ahead of the picture. `tests/test_live.py` streams for three

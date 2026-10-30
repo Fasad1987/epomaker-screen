@@ -2,11 +2,11 @@ import datetime as dt
 
 import pytest
 
+from epomaker_screen.drivers.rdm import device, qgif
+from epomaker_screen.drivers.rdm.device import Screen
+from epomaker_screen.drivers.rdm.protocol import BLOCK, Cmd, Slot, packet, table_pages, time_digits
+from epomaker_screen.hid import parse_descriptor
 from fake_screen import Clock, FakeScreen
-from rt82 import device, qgif
-from rt82.device import Screen
-from rt82.hidraw import parse_descriptor
-from rt82.protocol import BLOCK, Cmd, Slot, packet, table_pages, time_digits
 from test_live import FakeKeyboard, read_stamp, stamp
 
 
@@ -36,9 +36,12 @@ def test_table_pages():
 def test_descriptor_sizes():
     # QMK/VIA raw HID: usage page 0xFF60, 32-byte input and output reports.
     via = bytes.fromhex("0660ff0961a1010962150026ff007508952081020963150026ff00750895209102c0")
-    assert parse_descriptor(via) == (0xFF60, 32, 32)
+    d = parse_descriptor(via)
+    assert d.usage_page == 0xFF60 and d.has(0xFF60, 0x61)
+    assert (d.size("input"), d.size("output")) == (32, 32)
     lcd = bytes.fromhex("06ff000901a1010901150026ff007508954081020902150026ff00750895409102c0")
-    assert parse_descriptor(lcd) == (0x00FF, 64, 64)
+    d = parse_descriptor(lcd)
+    assert d.has(0x00FF, 1) and (d.size("input"), d.size("output")) == (64, 64)
 
 
 def test_upload_writes_images_and_shows_slot_one(monkeypatch):

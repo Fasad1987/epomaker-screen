@@ -1,0 +1,29 @@
+# epomaker-screen: access to the vendor interfaces of Epomaker keyboards with
+# screens, for the user at the machine (logind "uaccess"), without root and
+# without the "input" group. The ordinary keyboard interfaces stay root-only.
+#
+# RDM family (RT82, QK108, RT98):
+#  * keyboard 36b0:30a3/30af/30b9, interface 1 (usage page 0xFF60): settings and
+#    screen commands; also what Epomaker Hub in Chromium (WebHID) opens;
+#  * the screen controller 1919:1919, interface 1 (usage page 0x00FF), which
+#    appears behind the keyboard's internal hub only on request.
+# TFT family (RT100 Pro, RT75, RT85, Glyph: 3151:5002; RT100: 3151:4015;
+# HE65 Mag: 3151:502f): interface 2, the vendor command collection (usage page
+# 0xFFFF, usage 2) that the vendor software and this project use.
+#
+# udev requires all ATTRS{} of one rule to match on the same parent device,
+# and the ids and the interface number live on different parents, so the
+# device is tagged first and the interface is checked in a second rule.
+# The file must sort before 73-seat-late.rules, which applies "uaccess".
+
+ACTION=="remove", GOTO="epomaker_screen_end"
+SUBSYSTEM!="hidraw", GOTO="epomaker_screen_end"
+
+ATTRS{idVendor}=="36b0", ATTRS{idProduct}=="30a3|30af|30b9", ENV{EPOMAKER_SCREEN}="rdm"
+ATTRS{idVendor}=="1919", ATTRS{idProduct}=="1919", ENV{EPOMAKER_SCREEN}="rdm"
+ENV{EPOMAKER_SCREEN}=="rdm", ATTRS{bInterfaceNumber}=="01", TAG+="uaccess"
+
+ATTRS{idVendor}=="3151", ATTRS{idProduct}=="5002|4015|502f", ENV{EPOMAKER_SCREEN}="tft"
+ENV{EPOMAKER_SCREEN}=="tft", ATTRS{bInterfaceNumber}=="02", TAG+="uaccess"
+
+LABEL="epomaker_screen_end"

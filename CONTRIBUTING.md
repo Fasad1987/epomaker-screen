@@ -11,7 +11,7 @@ python3 -m venv .venv
 pip install -e '.[pyqt6,dev]'      # or '.[pyside6,dev]'
 ```
 
-Run the app from the checkout with `rt82-screen`, or `python -m rt82.gui`; the CLI is `rt82ctl`.
+Run the app from the checkout with `epomaker-screen`, or `python -m epomaker_screen.gui`; the CLI is `epomakerctl`.
 
 ## Checks
 
@@ -19,19 +19,31 @@ Run the app from the checkout with `rt82-screen`, or `python -m rt82.gui`; the C
 pytest                         # unit tests and the simulated screen controller
 ruff check . && ruff format --check .
 shellcheck -x scripts/*.sh
-udevadm verify data/udev/70-epomaker-rt82.rules   # systemd 254+
+udevadm verify data/udev/70-epomaker-screen.rules   # systemd 254+
 ```
 
 The GUI and rendering tests need Qt; they run headless with `QT_QPA_PLATFORM=offscreen` and are skipped when
 no Qt binding is installed. Continuous integration runs everything on PyQt6 and PySide6.
 
+## Adding a keyboard
+
+1. Run `epomakerctl probe --identify` with the keyboard connected by cable and keep the output.
+2. If it belongs to a known family (same vendor collection, same commands), add a `Model` to
+   `src/epomaker_screen/models.py` with its USB id, internal id (TFT) and screen size, unverified.
+3. Run the checklist in [docs/hardware-testing.md](docs/hardware-testing.md) and set `verified=True` once a
+   picture, the clock and (where it applies) live mode work.
+4. A new screen family gets its own package under `src/epomaker_screen/drivers/` with the same session API
+   (`sync_time`, `upload`, `info`, `live`, `recover`, `close`), a simulator in `tests/`, and a protocol page in
+   `docs/protocols/`.
+
 ## Working on the protocol
 
-- Read [docs/protocol.md](docs/protocol.md) first. Some command sequences freeze the screen controller until the
-  keyboard is power-cycled; the simulator in `tests/fake_screen.py` rejects the known ones (download mode,
+- Read the family's page in [docs/protocols/](docs/protocols/) first. Some command sequences freeze the screen controller until the
+  keyboard is power-cycled; the simulators in `tests/fake_screen.py` (RT82 family) and `tests/fake_tft.py` reject the known ones (download mode,
   erasing outside a session, erases that take too long, writing over programmed flash).
 - When you change how the device is driven, extend the simulator and add a test before trying it on hardware.
-- Keep every erase under ~3.4 s and never use download mode (`1B`).
+- RT82 family: keep every erase under ~3.4 s and never use download mode (`1B`). TFT family: only send commands
+  in the codec's allow-list.
 
 ## Style
 

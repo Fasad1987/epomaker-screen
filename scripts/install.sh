@@ -1,5 +1,5 @@
 #!/bin/bash
-# Installs RT82 Screen for a user, plus the udev rule.
+# Installs Epomaker Screen for a user, plus the udev rule.
 #
 #   scripts/install.sh              tray app + autostart + udev rule (root via sudo, or su without sudo)
 #   su -c 'scripts/install.sh'      the same, started as root (ALT Linux has no sudo by default)
@@ -13,7 +13,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/common.sh"
 
 PREFIX="${XDG_DATA_HOME:-$HOME/.local/share}"
-LIBDIR="$PREFIX/rt82-plasma"
+LIBDIR="$PREFIX/epomaker-screen"
 BINDIR="$HOME/.local/bin"
 CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}"
 SERVICE=0
@@ -36,15 +36,16 @@ done
 install_udev() {
 	say "Installing the udev rule"
 	# shellcheck disable=SC2016 # expanded by the root shell, not here
-	as_root sh -c 'install -Dm644 "$1" /etc/udev/rules.d/70-epomaker-rt82.rules || exit 1
+	as_root sh -c 'install -Dm644 "$1" /etc/udev/rules.d/70-epomaker-screen.rules || exit 1
+		rm -f /etc/udev/rules.d/70-epomaker-rt82.rules
 		{ udevadm control --reload-rules && udevadm trigger --subsystem-match=hidraw --action=add; } ||
-			echo "   udev did not reload its rules; they apply after a reboot"' sh "$ROOT/data/udev/70-epomaker-rt82.rules"
+			echo "   udev did not reload its rules; they apply after a reboot"' sh "$ROOT/data/udev/70-epomaker-screen.rules"
 }
 
 if [ "$(id -u)" = 0 ] && [ "$USER_STAGE" = 0 ]; then
 	# Started as root (su -c / sudo): system part here, the rest as the user.
 	U="$(target_user "$FOR_USER")" || die "Cannot tell which user to install for. Pass --user NAME."
-	run_as_user "$U" test -r "$ROOT/src/rt82/cli.py" ||
+	run_as_user "$U" test -r "$ROOT/src/epomaker_screen/cli.py" ||
 		die "User $U cannot read $ROOT. Put the project in their home directory."
 	[ "$UDEV" = 1 ] && install_udev
 	say "Installing the app for $U"
@@ -74,13 +75,22 @@ EOF
 }
 command -v playerctl >/dev/null || echo "   (optional) install playerctl for the \"Now playing\" widget; gdbus is used without it"
 
+# Version 0.2 and older were installed as "rt82-plasma".
+if [ -d "$PREFIX/rt82-plasma" ]; then
+	say "Removing the old RT82 Screen installation"
+	systemctl --user disable --now rt82-watch.service >/dev/null 2>&1 || true
+	rm -rf "$PREFIX/rt82-plasma" "$BINDIR/rt82ctl" "$BINDIR/rt82-screen" \
+		"$PREFIX/applications/rt82-plasma.desktop" "$PREFIX/icons/hicolor/scalable/apps/rt82-plasma.svg" \
+		"$CONFIG/autostart/rt82-plasma.desktop" "$CONFIG/systemd/user/rt82-watch.service"
+fi
+
 say "Copying the app to $LIBDIR"
 rm -rf "$LIBDIR"
 mkdir -p "$LIBDIR" "$BINDIR"
-cp -r "$ROOT/src/rt82" "$LIBDIR/"
+cp -r "$ROOT/src/epomaker_screen" "$LIBDIR/"
 find "$LIBDIR" -name '__pycache__' -prune -exec rm -rf {} +
 
-for pair in "rt82ctl:rt82.cli" "rt82-screen:rt82.gui"; do
+for pair in "epomakerctl:epomaker_screen.cli" "epomaker-screen:epomaker_screen.gui"; do
 	name="${pair%%:*}" mod="${pair#*:}"
 	cat > "$BINDIR/$name" <<EOF
 #!/bin/sh
@@ -89,25 +99,25 @@ EOF
 	chmod +x "$BINDIR/$name"
 done
 
-install -Dm644 "$ROOT/src/rt82/resources/rt82-plasma.svg" "$PREFIX/icons/hicolor/scalable/apps/rt82-plasma.svg"
-install -Dm644 "$ROOT/data/applications/rt82-plasma.desktop" "$PREFIX/applications/rt82-plasma.desktop"
-sed -i "s|^Exec=rt82-screen|Exec=$BINDIR/rt82-screen|" "$PREFIX/applications/rt82-plasma.desktop"
+install -Dm644 "$ROOT/src/epomaker_screen/resources/epomaker-screen.svg" "$PREFIX/icons/hicolor/scalable/apps/epomaker-screen.svg"
+install -Dm644 "$ROOT/data/applications/epomaker-screen.desktop" "$PREFIX/applications/epomaker-screen.desktop"
+sed -i "s|^Exec=epomaker-screen|Exec=$BINDIR/epomaker-screen|" "$PREFIX/applications/epomaker-screen.desktop"
 if command -v update-desktop-database >/dev/null; then
 	update-desktop-database "$PREFIX/applications" 2>/dev/null || true
 fi
 
 if [ "$SERVICE" = 1 ]; then
-	say "Enabling the rt82-watch service (systemd --user)"
-	rm -f "$CONFIG/autostart/rt82-plasma.desktop"
-	install -Dm644 "$ROOT/data/systemd/rt82-watch.service" "$CONFIG/systemd/user/rt82-watch.service"
+	say "Enabling the epomaker-screen-watch service (systemd --user)"
+	rm -f "$CONFIG/autostart/epomaker-screen.desktop"
+	install -Dm644 "$ROOT/data/systemd/epomaker-screen-watch.service" "$CONFIG/systemd/user/epomaker-screen-watch.service"
 	user_systemctl daemon-reload
-	user_systemctl enable --now rt82-watch.service
+	user_systemctl enable --now epomaker-screen-watch.service
 else
 	say "Adding the tray app to autostart"
-	install -Dm644 "$ROOT/data/applications/rt82-plasma-autostart.desktop" "$CONFIG/autostart/rt82-plasma.desktop"
-	sed -i "s|^Exec=rt82-screen|Exec=$BINDIR/rt82-screen|" "$CONFIG/autostart/rt82-plasma.desktop"
-	if systemctl --user is-enabled rt82-watch.service >/dev/null 2>&1; then
-		systemctl --user disable --now rt82-watch.service || true
+	install -Dm644 "$ROOT/data/applications/epomaker-screen-autostart.desktop" "$CONFIG/autostart/epomaker-screen.desktop"
+	sed -i "s|^Exec=epomaker-screen|Exec=$BINDIR/epomaker-screen|" "$CONFIG/autostart/epomaker-screen.desktop"
+	if systemctl --user is-enabled epomaker-screen-watch.service >/dev/null 2>&1; then
+		systemctl --user disable --now epomaker-screen-watch.service || true
 	fi
 fi
 
@@ -125,5 +135,5 @@ else
 fi
 
 say "Done"
-echo "  Reconnect the keyboard cable, then check: $BINDIR/rt82ctl list"
-echo "  The app is \"RT82 Screen\" in the menu (or $BINDIR/rt82-screen)."
+echo "  Reconnect the keyboard cable, then check: $BINDIR/epomakerctl list"
+echo "  The app is \"Epomaker Screen\" in the menu (or $BINDIR/epomaker-screen)."

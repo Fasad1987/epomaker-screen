@@ -1,0 +1,15 @@
+# Headless alternative to the tray app: sets keyboard clocks (and keeps TFT
+# keyboards' own system pages up to date) whenever a keyboard is plugged in and
+# after suspend. Do not run it together with the tray app.
+[Unit]
+Description=Epomaker keyboard screen clock sync
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/epomakerctl watch
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
