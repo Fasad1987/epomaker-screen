@@ -274,7 +274,9 @@ def cmd_live(a) -> int:
     if a.fps and driver.family == "rdm":
         config.fps = a.fps
     if a.interval and driver.family == "tft":
-        config.interval_s = max(10.0, a.interval)
+        from .drivers.tft import MIN_REFRESH_S
+
+        config.interval_s = max(MIN_REFRESH_S, a.interval)
     with _session(a) as (_d, s):
         live = s.live(render, fallback, config)
         live.start()
@@ -441,7 +443,11 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--size", help="screen size WxH (default 240x135)")
         if name == "live":
             p.add_argument("--fps", type=int, help="RT82 family: frames per second")
-            p.add_argument("--interval", type=float, help="TFT family: seconds between picture updates (min 10)")
+            p.add_argument(
+                "--interval",
+                type=float,
+                help="TFT family: seconds between picture updates (min 300: each one wears the flash)",
+            )
         if name == "watch":
             p.add_argument("--live", action="store_true", help="also keep live mode running")
         p.set_defaults(fn=fn)

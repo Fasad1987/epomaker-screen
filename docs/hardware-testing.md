@@ -40,8 +40,8 @@ Also check, and report:
 
 - After unplugging and replugging: are the pictures still there?
 - Which keys switch the screen to the picture page, the clock and the system page? (RT100 Pro: Fn + PgUp/PgDn.)
-- With an animation stored: switch to the clock page with Epomaker Screen closed. Does the keyboard go back to the
-  animation, and after how long? Does `epomakerctl sysinfo` or `sync-time` make it switch at once?
+- With an animation stored, the RT100 Pro goes back to it by itself after a while (firmware timer, checked with no
+  program running). After how long, on your model?
 - In `lab speed`: the fastest delay that still gives complete pictures.
 - In `lab banks`: the timings it prints, and on which attempt each bank was accepted.
 

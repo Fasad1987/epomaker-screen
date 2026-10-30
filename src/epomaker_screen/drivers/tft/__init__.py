@@ -63,11 +63,18 @@ def command_node(usb_path: str, vid: int, pid: int, devices: list[hid.HidInfo] |
     return None
 
 
+# Each live update rewrites a whole picture in the keyboard's flash (29 erase blocks on
+# an RT100 Pro). NOR flash lasts about 100,000 erases, and there is no sign of wear
+# levelling: once a minute would wear a bank out in about 70 days of use, every
+# 15 minutes in about 3 years.
+MIN_REFRESH_S = 300.0
+
+
 @dataclass
 class RefreshConfig:
     """Live mode for TFT keyboards: each update rewrites a picture bank."""
 
-    interval_s: float = 60.0  # how often to re-render and send changes
+    interval_s: float = 900.0  # how often to re-render and send changes (at least MIN_REFRESH_S)
     # Send only the changed rectangle. An RT100 Pro (firmware 0x0109) draws the box on black,
     # dropping the rest of the picture, so this stays off.
     partial: bool = False

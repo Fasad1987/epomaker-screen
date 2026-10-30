@@ -24,6 +24,8 @@ All notable changes to this project are documented here. The format follows
   attempts and the last reply.
 - `lab banks` logs timings, carries on past a refused bank and takes `--pause`; `lab partial` also tries a
   full-height strip and a page switch.
+- TFT live mode redraws every 15 minutes by default and at least every 5 (it was 1 minute): each update rewrites
+  flash, and once a minute would wear it out within months.
 - The "send only the changed part" setting is gone from the app: an RT100 Pro draws the part on black instead of
   patching the picture.
 

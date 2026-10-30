@@ -139,14 +139,16 @@ On the RT100 Pro **Fn + PgUp / PgDn** cycle the screen pages: the clock page, th
 the five pictures. There is no known command to switch pages from the host.
 
 Once an animation is stored, the keyboard goes back to it by itself some time after you switch to another page,
-so the clock page shows only until then. Still open: is that the firmware's own idle timer, or does a host
-command (system info `22` every 2 s from the app, or clock `28`) make it redraw?
+so the clock page shows only until then. This is the firmware's own timer: it happens with no program talking to
+the keyboard. The host cannot turn it off or switch pages.
 
 ## Live widgets on TFT keyboards
 
-The firmware cannot be streamed to like the RT82's controller, and each update rewrites a picture bank. Live
-mode therefore redraws the layout every `interval_s` (60 s by default, aligned to the minute) and only sends a
-picture when it changed (under a second on an RT100 Pro). It always sends the whole picture: a smaller box
+The firmware cannot be streamed to like the RT82's controller, and each update rewrites a picture bank in flash.
+NOR flash lasts about 100,000 erases and there is no sign of wear levelling, so live mode redraws the layout every
+`interval_s` (15 minutes by default, at least 5, aligned to the interval) and only sends a picture when it changed
+(a few seconds on an RT100 Pro). Once a minute would wear a bank out in about 70 days of use; for a clock, use
+the keyboard's own clock page. It always sends the whole picture: a smaller box
 replaces the picture rather than patching it.
 
 The firmware draws a clock and a system page itself: Epomaker Screen sets the clock on connect and after suspend and
